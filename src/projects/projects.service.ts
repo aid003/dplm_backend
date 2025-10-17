@@ -35,6 +35,16 @@ export class ProjectsService {
     return this.databaseService.listProjectsByUser(userId);
   }
 
+  async findByIdForUser(userId: string, projectId: string): Promise<Project> {
+    const project = await this.databaseService.project.findFirst({
+      where: { id: projectId, userId },
+    });
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+    return project;
+  }
+
   async removeById(userId: string, projectId: string): Promise<Project> {
     const deleted = await this.databaseService.deleteProjectForUser(
       projectId,

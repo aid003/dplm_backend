@@ -155,7 +155,11 @@ export class ProjectsController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Удалить проект текущего пользователя' })
-  @ApiParam({ name: 'id', description: 'ID проекта', schema: { type: 'string', format: 'uuid' } })
+  @ApiParam({
+    name: 'id',
+    description: 'ID проекта',
+    schema: { type: 'string', format: 'uuid' },
+  })
   @ApiNoContentResponse({ description: 'Проект удалён' })
   @ApiNotFoundResponse({ description: 'Проект не найден' })
   @HttpCode(204)

@@ -189,7 +189,9 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.databaseService.updateProjectStatusByJobId(jobId, 'READY');
       } catch (e) {
-        this.logger.warn(`Failed to set project READY for job ${jobId}: ${String(e)}`);
+        this.logger.warn(
+          `Failed to set project READY for job ${jobId}: ${String(e)}`,
+        );
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -210,7 +212,9 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.databaseService.updateProjectStatusByJobId(jobId, 'ERROR');
       } catch (e) {
-        this.logger.warn(`Failed to set project ERROR for job ${jobId}: ${String(e)}`);
+        this.logger.warn(
+          `Failed to set project ERROR for job ${jobId}: ${String(e)}`,
+        );
       }
     } finally {
       this.complete(jobId);

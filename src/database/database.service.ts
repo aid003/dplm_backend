@@ -27,12 +27,10 @@ export class DatabaseService
     try {
       await this.$connect();
       this.logger.log('✅ Database connection established successfully');
-    } catch (error) {
-      this.logger.error(
-        '❌ Failed to connect to database:',
-        error instanceof Error ? error.message : String(error),
-      );
-      throw error instanceof Error ? error : new Error(String(error));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error('❌ Failed to connect to database:', message);
+      throw e instanceof Error ? e : new Error(String(e));
     }
   }
 
@@ -40,11 +38,9 @@ export class DatabaseService
     try {
       await this.$disconnect();
       this.logger.log('🔌 Database connection closed gracefully');
-    } catch (error) {
-      this.logger.error(
-        '❌ Error during database disconnection:',
-        error instanceof Error ? error.message : String(error),
-      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error('❌ Error during database disconnection:', message);
     }
   }
 
@@ -52,11 +48,9 @@ export class DatabaseService
     try {
       await this.$queryRaw`SELECT 1`;
       return true;
-    } catch (error) {
-      this.logger.error(
-        'Database health check failed:',
-        error instanceof Error ? error.message : String(error),
-      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error('Database health check failed:', message);
       return false;
     }
   }
@@ -81,7 +75,7 @@ export class DatabaseService
         where: { jobId },
         data: { status },
       });
-    } catch (error) {
+    } catch (e) {
       // Если проект не найден по jobId, вернём null
       return null;
     }
