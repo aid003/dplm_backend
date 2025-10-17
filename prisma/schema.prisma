@@ -16,5 +16,28 @@ model User {
   passwordHash  String
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  projects      Project[]
+}
+
+enum ProjectStatus {
+  PROCESSING
+  READY
+  ERROR
+}
+
+model Project {
+  id            String         @id @default(uuid())
+  name          String
+  description   String?
+  zipPath       String
+  extractedPath String
+  jobId         String         @unique
+  status        ProjectStatus  @default(PROCESSING)
+  userId        String
+  user          User           @relation(fields: [userId], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([userId])
 }
 

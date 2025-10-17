@@ -5,6 +5,7 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { PrismaClient } from '../../generated/prisma';
+import type { Prisma, Project } from '../../generated/prisma';
 
 @Injectable()
 export class DatabaseService
@@ -58,5 +59,16 @@ export class DatabaseService
       );
       return false;
     }
+  }
+
+  async createProject(args: Prisma.ProjectCreateArgs): Promise<Project> {
+    return this.project.create(args);
+  }
+
+  async listProjectsByUser(userId: string): Promise<Project[]> {
+    return this.project.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 }
