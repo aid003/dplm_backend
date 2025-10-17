@@ -7,7 +7,14 @@ const logger = new Logger('Bootstrap');
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
+  app.enableCors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['*'],
+    exposedHeaders: ['*'],
+    maxAge: 86400,
+  });
   app.setGlobalPrefix('api');
   app.enableShutdownHooks();
 
@@ -39,12 +46,12 @@ async function bootstrap() {
   const port = process.env.PORT ?? 8000;
   await app.listen(port);
 
-  logger.log(`🚀 Application is running on: http://localhost:${port}`);
-  logger.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.log(`🚀 Application is running on: http://localhost:${port}/api`);
   logger.log(`📚 Swagger UI available at: http://localhost:${port}/api/docs`);
   logger.log(
     `📄 API JSON available at: http://localhost:${port}/api/docs-json`,
   );
+  logger.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
 
   const gracefulShutdown = async (signal: string): Promise<void> => {
     logger.log(`📡 Received ${signal}. Starting graceful shutdown...`);
