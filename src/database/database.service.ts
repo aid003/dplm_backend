@@ -27,8 +27,11 @@ export class DatabaseService
       await this.$connect();
       this.logger.log('✅ Database connection established successfully');
     } catch (error) {
-      this.logger.error('❌ Failed to connect to database:', error);
-      throw error;
+      this.logger.error(
+        '❌ Failed to connect to database:',
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 
@@ -37,7 +40,10 @@ export class DatabaseService
       await this.$disconnect();
       this.logger.log('🔌 Database connection closed gracefully');
     } catch (error) {
-      this.logger.error('❌ Error during database disconnection:', error);
+      this.logger.error(
+        '❌ Error during database disconnection:',
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 
@@ -46,7 +52,10 @@ export class DatabaseService
       await this.$queryRaw`SELECT 1`;
       return true;
     } catch (error) {
-      this.logger.error('Database health check failed:', error);
+      this.logger.error(
+        'Database health check failed:',
+        error instanceof Error ? error.message : String(error),
+      );
       return false;
     }
   }
