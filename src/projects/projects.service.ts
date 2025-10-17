@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { Project, $Enums, Prisma } from '../../generated/prisma';
 
@@ -33,5 +33,16 @@ export class ProjectsService {
 
   listByUser(userId: string): Promise<Project[]> {
     return this.databaseService.listProjectsByUser(userId);
+  }
+
+  async removeById(userId: string, projectId: string): Promise<Project> {
+    const deleted = await this.databaseService.deleteProjectForUser(
+      projectId,
+      userId,
+    );
+    if (!deleted) {
+      throw new NotFoundException('Project not found');
+    }
+    return deleted;
   }
 }

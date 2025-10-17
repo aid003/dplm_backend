@@ -71,4 +71,31 @@ export class DatabaseService
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async updateProjectStatusByJobId(
+    jobId: string,
+    status: 'PROCESSING' | 'READY' | 'ERROR',
+  ): Promise<Project | null> {
+    try {
+      return await this.project.update({
+        where: { jobId },
+        data: { status },
+      });
+    } catch (error) {
+      // Если проект не найден по jobId, вернём null
+      return null;
+    }
+  }
+
+  async deleteProjectForUser(
+    projectId: string,
+    userId: string,
+  ): Promise<Project | null> {
+    const existing = await this.project.findFirst({
+      where: { id: projectId, userId },
+    });
+    if (!existing) return null;
+    const deleted = await this.project.delete({ where: { id: projectId } });
+    return deleted;
+  }
 }

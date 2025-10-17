@@ -11,6 +11,7 @@ import {
   clearInterval as clearNodeInterval,
 } from 'node:timers';
 import { Subject } from 'rxjs';
+import { DatabaseService } from '../database/database.service';
 import type {
   ProgressEvent,
   ExtractionState,
@@ -63,6 +64,8 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
     extractedDir: resolve('storage/extracted'),
     ttlMs: 1000 * 60 * 60 * 24, // 24h
   };
+
+  constructor(private readonly databaseService: DatabaseService) {}
 
   async onModuleInit(): Promise<void> {
     await ensureDirectoryExists(this.config.baseDir);
@@ -182,6 +185,12 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
       }
       state.finishedAt = Date.now();
       this.emit(jobId, { jobId, phase: 'done', percent: 100 });
+      // Обновим статус проекта до READY по jobId
+      try {
+        await this.databaseService.updateProjectStatusByJobId(jobId, 'READY');
+      } catch (e) {
+        this.logger.warn(`Failed to set project READY for job ${jobId}: ${String(e)}`);
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       state.error = message;
@@ -197,9 +206,41 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
         ),
         message,
       });
+      // Обновим статус проекта до ERROR по jobId
+      try {
+        await this.databaseService.updateProjectStatusByJobId(jobId, 'ERROR');
+      } catch (e) {
+        this.logger.warn(`Failed to set project ERROR for job ${jobId}: ${String(e)}`);
+      }
     } finally {
       this.complete(jobId);
     }
+  }
+
+  async removeProjectArtifacts(
+    zipPath: string,
+    extractedPath: string,
+  ): Promise<void> {
+    const targets: string[] = [];
+    try {
+      const safeZip = ensurePathInside(this.config.uploadsDir, zipPath);
+      targets.push(safeZip);
+    } catch (e) {
+      this.logger.warn(`Zip path skipped as unsafe: ${String(e)}`);
+    }
+    try {
+      const safeExtracted = ensurePathInside(
+        this.config.extractedDir,
+        extractedPath,
+      );
+      targets.push(safeExtracted);
+    } catch (e) {
+      this.logger.warn(`Extracted path skipped as unsafe: ${String(e)}`);
+    }
+    if (targets.length === 0) return;
+    await Promise.allSettled(
+      targets.map((p) => fsp.rm(p, { recursive: true, force: true })),
+    );
   }
 
   private async cleanupOldFiles(): Promise<void> {

@@ -8,6 +8,10 @@ import {
   UseInterceptors,
   BadRequestException,
   Request,
+  Delete,
+  Param,
+  HttpCode,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -20,6 +24,9 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiParam,
+  ApiNoContentResponse,
+  ApiNotFoundResponse,
 } from '@nestjs/swagger';
 import type { Request as ExpressRequest } from 'express';
 import type { User } from '../../generated/prisma';
@@ -142,5 +149,24 @@ export class ProjectsController {
       updatedAt: p.updatedAt,
     }));
     return dto;
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Удалить проект текущего пользователя' })
+  @ApiParam({ name: 'id', description: 'ID проекта', schema: { type: 'string', format: 'uuid' } })
+  @ApiNoContentResponse({ description: 'Проект удалён' })
+  @ApiNotFoundResponse({ description: 'Проект не найден' })
+  @HttpCode(204)
+  async remove(
+    @Request() req: ExpressRequest & { user: Omit<User, 'passwordHash'> },
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<void> {
+    const deleted = await this.projectsService.removeById(req.user.id, id);
+    await this.uploadsService.removeProjectArtifacts(
+      deleted.zipPath,
+      deleted.extractedPath,
+    );
   }
 }
