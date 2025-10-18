@@ -5,7 +5,13 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { PrismaClient } from '../../generated/prisma';
-import type { Prisma, Project } from '../../generated/prisma';
+import type {
+  Prisma,
+  Project,
+  AnalysisReport,
+  Vulnerability,
+  CodeExplanation,
+} from '../../generated/prisma';
 
 @Injectable()
 export class DatabaseService
@@ -90,5 +96,136 @@ export class DatabaseService
     if (!existing) return null;
     const deleted = await this.project.delete({ where: { id: projectId } });
     return deleted;
+  }
+
+  // Analysis Report methods
+  async createAnalysisReport(
+    data: Prisma.AnalysisReportCreateInput,
+  ): Promise<AnalysisReport> {
+    return this.analysisReport.create({ data });
+  }
+
+  async findAnalysisReportById(
+    id: string,
+  ): Promise<Prisma.AnalysisReportGetPayload<{
+    include: { vulnerabilities: true; explanations: true };
+  }> | null> {
+    return this.analysisReport.findUnique({
+      where: { id },
+      include: {
+        vulnerabilities: true,
+        explanations: true,
+      },
+    });
+  }
+
+  async updateAnalysisReport(
+    id: string,
+    data: Prisma.AnalysisReportUpdateInput,
+  ): Promise<AnalysisReport> {
+    return this.analysisReport.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async listAnalysisReportsByProject(
+    projectId: string,
+    filters: Prisma.AnalysisReportWhereInput = {},
+  ): Promise<
+    Prisma.AnalysisReportGetPayload<{
+      include: { vulnerabilities: true; explanations: true };
+    }>[]
+  > {
+    return this.analysisReport.findMany({
+      where: { projectId, ...filters },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        vulnerabilities: true,
+        explanations: true,
+      },
+    });
+  }
+
+  async countAnalysisReports(
+    where: Prisma.AnalysisReportWhereInput,
+  ): Promise<number> {
+    return this.analysisReport.count({ where });
+  }
+
+  // Vulnerability methods
+  async createVulnerability(
+    data: Prisma.VulnerabilityCreateInput,
+  ): Promise<Vulnerability> {
+    return this.vulnerability.create({ data });
+  }
+
+  async createManyVulnerabilities(
+    data: Prisma.VulnerabilityCreateManyInput[],
+  ): Promise<Prisma.BatchPayload> {
+    return this.vulnerability.createMany({ data });
+  }
+
+  async findVulnerabilitiesByReport(
+    reportId: string,
+  ): Promise<Vulnerability[]> {
+    return this.vulnerability.findMany({
+      where: { reportId },
+      orderBy: [{ severity: 'asc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  async findVulnerabilitiesByProject(
+    projectId: string,
+    filters: Prisma.VulnerabilityWhereInput = {},
+  ): Promise<Vulnerability[]> {
+    return this.vulnerability.findMany({
+      where: {
+        report: {
+          projectId,
+          type: 'VULNERABILITY',
+        },
+        ...filters,
+      },
+      orderBy: [{ severity: 'asc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  // Code Explanation methods
+  async createCodeExplanation(
+    data: Prisma.CodeExplanationCreateInput,
+  ): Promise<CodeExplanation> {
+    return this.codeExplanation.create({ data });
+  }
+
+  async createManyCodeExplanations(
+    data: Prisma.CodeExplanationCreateManyInput[],
+  ): Promise<Prisma.BatchPayload> {
+    return this.codeExplanation.createMany({ data });
+  }
+
+  async findCodeExplanationsByReport(
+    reportId: string,
+  ): Promise<CodeExplanation[]> {
+    return this.codeExplanation.findMany({
+      where: { reportId },
+      orderBy: [{ filePath: 'asc' }, { lineStart: 'asc' }],
+    });
+  }
+
+  async findCodeExplanationsByProject(
+    projectId: string,
+    filters: Prisma.CodeExplanationWhereInput = {},
+  ): Promise<CodeExplanation[]> {
+    return this.codeExplanation.findMany({
+      where: {
+        report: {
+          projectId,
+          type: 'EXPLANATION',
+        },
+        ...filters,
+      },
+      orderBy: [{ filePath: 'asc' }, { lineStart: 'asc' }],
+    });
   }
 }

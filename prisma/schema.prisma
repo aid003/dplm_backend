@@ -37,7 +37,92 @@ model Project {
   user          User           @relation(fields: [userId], references: [id])
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  analysisReports AnalysisReport[]
 
   @@index([userId])
+}
+
+model AnalysisReport {
+  id              String              @id @default(uuid())
+  projectId       String
+  project         Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type            AnalysisType       
+  status          AnalysisStatus    
+  filePath        String?             
+  language        String?           
+  result          Json             
+  error           String?
+  progress        Json?              
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  vulnerabilities Vulnerability[]
+  explanations    CodeExplanation[]
+  
+  @@index([projectId])
+  @@index([projectId, type])
+  @@index([status])
+}
+
+model Vulnerability {
+  id          String          @id @default(uuid())
+  reportId    String
+  report      AnalysisReport  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  severity    VulnSeverity   
+  type        String         
+  title       String
+  description String
+  filePath    String
+  lineStart   Int
+  lineEnd     Int
+  codeSnippet String
+  recommendation String
+  cwe         String?        
+  createdAt   DateTime        @default(now())
+  
+  @@index([reportId])
+  @@index([severity])
+  @@index([type])
+}
+
+model CodeExplanation {
+  id          String          @id @default(uuid())
+  reportId    String
+  report      AnalysisReport  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  filePath    String
+  symbolName  String?        
+  symbolType  String?         
+  lineStart   Int
+  lineEnd     Int
+  summary     String         
+  detailed    String         
+  complexity  Int?          
+  createdAt   DateTime        @default(now())
+  
+  @@index([reportId])
+  @@index([filePath])
+  @@index([symbolType])
+}
+
+enum AnalysisType {
+  VULNERABILITY
+  EXPLANATION
+  RECOMMENDATION
+  FULL
+}
+
+enum AnalysisStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum VulnSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
 }
 
