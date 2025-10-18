@@ -75,8 +75,7 @@ export class DatabaseService
         where: { jobId },
         data: { status },
       });
-    } catch (e) {
-      // Если проект не найден по jobId, вернём null
+    } catch {
       return null;
     }
   }

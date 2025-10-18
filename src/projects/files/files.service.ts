@@ -169,7 +169,17 @@ export class ProjectFilesService {
     if (stat.size > MAX_BINARY_BYTES) {
       throw new BadRequestException('Payload too large');
     }
-    const lookupResult = mimeLookup(this.basename(relativePath));
+    const fileName = this.basename(relativePath);
+    const lookupResult: string | false = (() => {
+      try {
+        const result: unknown = (mimeLookup as (path: string) => unknown)(
+          fileName,
+        );
+        return typeof result === 'string' ? result : false;
+      } catch {
+        return false;
+      }
+    })();
     const mimeType =
       typeof lookupResult === 'string'
         ? lookupResult

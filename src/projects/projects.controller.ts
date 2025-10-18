@@ -12,6 +12,7 @@ import {
   Param,
   HttpCode,
   ParseUUIDPipe,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -168,6 +169,9 @@ export class ProjectsController {
     @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<void> {
     const deleted = await this.projectsService.removeById(req.user.id, id);
+    if (!deleted) {
+      throw new NotFoundException('Project not found');
+    }
     await this.uploadsService.removeProjectArtifacts(
       deleted.zipPath,
       deleted.extractedPath,
