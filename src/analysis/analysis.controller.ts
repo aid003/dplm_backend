@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -29,6 +30,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AnalysisService } from './analysis.service';
 import { VulnerabilityService } from './vulnerability/vulnerability.service';
 import { ExplanationService } from './explanation/explanation.service';
+import { RecommendationsService } from './recommendations/recommendations.service';
+import { SemanticSearchService } from './explanation/semantic-search.service';
 import { AnalysisRequestDto, AnalysisType } from './dto/analysis-request.dto';
 import {
   AnalysisReportDto,
@@ -37,6 +40,8 @@ import {
   VulnerabilityDto,
   CodeExplanationDto,
   AnalysisResultDto,
+  RecommendationDto,
+  RecommendationsResponseDto,
 } from './dto/analysis-response.dto';
 import { ExplainRequestDto } from './dto/explain-request.dto';
 import {
@@ -44,6 +49,7 @@ import {
   AnalysisProgressDto,
   VulnSeverity,
 } from './dto/analysis-response.dto';
+import { isDevelopment, getLogLevel } from './utils/environment.util';
 
 interface AnalysisReport {
   id: string;
@@ -107,10 +113,14 @@ interface ExplanationResult {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class AnalysisController {
+  private readonly logger = new Logger(AnalysisController.name);
+
   constructor(
     private readonly analysisService: AnalysisService,
     private readonly vulnerabilityService: VulnerabilityService,
     private readonly explanationService: ExplanationService,
+    private readonly recommendationsService: RecommendationsService,
+    private readonly semanticSearchService: SemanticSearchService,
   ) {}
 
   @Post('projects/:projectId/analyze')
@@ -132,17 +142,43 @@ export class AnalysisController {
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
     @Body() body: AnalysisRequestDto,
   ): Promise<{ reportId: string; status: string }> {
-    const report = await this.analysisService.startAnalysis(
-      req.user.id,
-      projectId,
-      body.type,
-      body.options || {},
-    );
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
 
-    return {
-      reportId: report.id,
-      status: report.status,
-    };
+    this.logger.log(`Запрос на запуск анализа проекта ${projectId} от пользователя ${req.user.id}`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры запроса анализа:', {
+        userId: req.user.id,
+        projectId,
+        type: body.type,
+        options: body.options,
+        userAgent: req.headers['user-agent'],
+        ip: req.ip,
+      });
+    }
+
+    try {
+      const report = await this.analysisService.startAnalysis(
+        req.user.id,
+        projectId,
+        body.type,
+        body.options || {},
+        body.query,
+      );
+
+      const duration = Date.now() - startTime;
+      this.logger.log(`Анализ ${report.id} запущен за ${duration}ms`);
+
+      return {
+        reportId: report.id,
+        status: report.status,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`Ошибка при запуске анализа проекта ${projectId} (${duration}ms):`, error);
+      throw error;
+    }
   }
 
   @Get('reports/:reportId')
@@ -160,8 +196,19 @@ export class AnalysisController {
   async getAnalysisResults(
     @Param('reportId', new ParseUUIDPipe()) reportId: string,
   ): Promise<AnalysisReportDto> {
-    const report = await this.analysisService.getAnalysisStatus(reportId);
-    return this.mapReportToDto(report as unknown as AnalysisReport);
+    const startTime = Date.now();
+    this.logger.log(`Запрос результатов анализа ${reportId}`);
+
+    try {
+      const report = await this.analysisService.getAnalysisStatus(reportId);
+      const duration = Date.now() - startTime;
+      this.logger.log(`Результаты анализа ${reportId} получены за ${duration}ms`);
+      return this.mapReportToDto(report as unknown as AnalysisReport);
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`Ошибка при получении результатов анализа ${reportId} (${duration}ms):`, error);
+      throw error;
+    }
   }
 
   @Get('reports/:reportId/status')
@@ -246,17 +293,42 @@ export class AnalysisController {
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
   ): Promise<AnalysisHistoryDto> {
-    const result = (await this.analysisService.getProjectAnalysisHistory(
-      req.user.id,
-      projectId,
-      { type, status: status as AnalysisStatus | undefined, limit, offset },
-    )) as AnalysisHistoryResult;
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
 
-    return {
-      reports: result.reports.map((report) => this.mapReportToDto(report)),
-      total: result.total,
-      stats: result.stats,
-    };
+    this.logger.log(`Запрос истории анализов проекта ${projectId} от пользователя ${req.user.id}`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры запроса истории:', {
+        userId: req.user.id,
+        projectId,
+        type,
+        status,
+        limit,
+        offset,
+      });
+    }
+
+    try {
+      const result = (await this.analysisService.getProjectAnalysisHistory(
+        req.user.id,
+        projectId,
+        { type, status: status as AnalysisStatus | undefined, limit, offset },
+      )) as AnalysisHistoryResult;
+
+      const duration = Date.now() - startTime;
+      this.logger.log(`История анализов проекта ${projectId} получена за ${duration}ms: найдено ${result.total} отчетов`);
+
+      return {
+        reports: result.reports.map((report) => this.mapReportToDto(report)),
+        total: result.total,
+        stats: result.stats,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`Ошибка при получении истории анализов проекта ${projectId} (${duration}ms):`, error);
+      throw error;
+    }
   }
 
   @Get('projects/:projectId/vulnerabilities')
@@ -362,6 +434,206 @@ export class AnalysisController {
     );
   }
 
+  @Get('projects/:projectId/recommendations')
+  @ApiOperation({ summary: 'Получить рекомендации проекта' })
+  @ApiParam({
+    name: 'projectId',
+    description: 'ID проекта',
+    schema: { type: 'string', format: 'uuid' },
+  })
+  @ApiQuery({
+    name: 'category',
+    required: false,
+    description: 'Категория рекомендации (например: performance, security, code-quality)',
+    example: 'performance',
+  })
+  @ApiQuery({
+    name: 'priority',
+    required: false,
+    enum: ['HIGH', 'MEDIUM', 'LOW'],
+    description: 'Приоритет рекомендации',
+    example: 'HIGH',
+  })
+  @ApiQuery({
+    name: 'filePath',
+    required: false,
+    description: 'Путь к файлу для фильтрации рекомендаций',
+    example: 'src/app.controller.ts',
+  })
+  @ApiOkResponse({
+    description: 'Список рекомендаций с статистикой',
+    type: RecommendationsResponseDto,
+  })
+  @ApiNotFoundResponse({ description: 'Проект не найден или нет завершенных анализов' })
+  @ApiUnauthorizedResponse({ description: 'Не авторизован' })
+  async getRecommendations(
+    @Request() req: ExpressRequest & { user: Omit<User, 'passwordHash'> },
+    @Param('projectId', new ParseUUIDPipe()) projectId: string,
+    @Query('category') category?: string,
+    @Query('priority') priority?: 'HIGH' | 'MEDIUM' | 'LOW',
+    @Query('filePath') filePath?: string,
+  ): Promise<RecommendationsResponseDto> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(`Запрос рекомендаций проекта ${projectId} от пользователя ${req.user.id}`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры запроса рекомендаций:', {
+        userId: req.user.id,
+        projectId,
+        category,
+        priority,
+        filePath,
+      });
+    }
+
+    try {
+      const result = await this.recommendationsService.getRecommendationsForProject(
+        req.user.id,
+        projectId,
+        { category, priority, filePath },
+      );
+
+      const duration = Date.now() - startTime;
+      this.logger.log(`Рекомендации проекта ${projectId} получены за ${duration}ms: ${result.recommendations.length} рекомендаций`);
+
+      return {
+        recommendations: result.recommendations.map((rec) => this.mapRecommendationToDto(rec)),
+        stats: result.stats,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`Ошибка при получении рекомендаций проекта ${projectId} (${duration}ms):`, error);
+      throw error;
+    }
+  }
+
+  @Post('projects/:projectId/index')
+  @ApiOperation({ summary: 'Создать или обновить индекс файлов проекта для семантического поиска' })
+  @ApiParam({
+    name: 'projectId',
+    description: 'ID проекта',
+    schema: { type: 'string', format: 'uuid' },
+  })
+  @ApiOkResponse({
+    description: 'Индекс создан или обновлен',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        indexedFiles: { type: 'number' },
+        skippedFiles: { type: 'number' },
+        errors: { type: 'number' },
+        duration: { type: 'number' },
+        message: { type: 'string' },
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Проект не найден' })
+  @ApiUnauthorizedResponse({ description: 'Не авторизован' })
+  async indexProject(
+    @Request() req: ExpressRequest & { user: Omit<User, 'passwordHash'> },
+    @Param('projectId', new ParseUUIDPipe()) projectId: string,
+  ): Promise<{
+    success: boolean;
+    indexedFiles: number;
+    skippedFiles: number;
+    errors: number;
+    duration: number;
+    message: string;
+  }> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(`Запрос на индексацию проекта ${projectId} от пользователя ${req.user.id}`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры индексации:', {
+        userId: req.user.id,
+        projectId,
+      });
+    }
+
+    try {
+      const result = await this.semanticSearchService.indexProject(
+        req.user.id,
+        projectId,
+        ['typescript', 'javascript', 'python', 'go'],
+      );
+
+      const duration = Date.now() - startTime;
+      this.logger.log(`Индексация проекта ${projectId} завершена за ${duration}ms: проиндексировано ${result.indexedFiles} файлов`);
+
+      return {
+        success: true,
+        indexedFiles: result.indexedFiles,
+        skippedFiles: result.skippedFiles,
+        errors: result.errors,
+        duration: result.duration,
+        message: `Индексация завершена: проиндексировано ${result.indexedFiles} файлов, пропущено ${result.skippedFiles}, ошибок ${result.errors}`,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`Ошибка при индексации проекта ${projectId} (${duration}ms):`, error);
+      throw error;
+    }
+  }
+
+  @Get('projects/:projectId/index/status')
+  @ApiOperation({ summary: 'Получить статус индекса файлов проекта' })
+  @ApiParam({
+    name: 'projectId',
+    description: 'ID проекта',
+    schema: { type: 'string', format: 'uuid' },
+  })
+  @ApiOkResponse({
+    description: 'Статус индекса',
+    schema: {
+      type: 'object',
+      properties: {
+        totalFiles: { type: 'number' },
+        lastIndexed: { type: 'string', format: 'date-time', nullable: true },
+        languages: { type: 'object' },
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Проект не найден' })
+  @ApiUnauthorizedResponse({ description: 'Не авторизован' })
+  async getIndexStatus(
+    @Request() req: ExpressRequest & { user: Omit<User, 'passwordHash'> },
+    @Param('projectId', new ParseUUIDPipe()) projectId: string,
+  ): Promise<{
+    totalFiles: number;
+    lastIndexed: string | null;
+    languages: Record<string, number>;
+  }> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(`Запрос статуса индекса проекта ${projectId} от пользователя ${req.user.id}`);
+
+    try {
+      // Проверяем права доступа к проекту
+      await this.analysisService.getProjectAnalysisHistory(req.user.id, projectId, { limit: 1 });
+
+      const status = await this.semanticSearchService.getIndexStatus(projectId);
+
+      const duration = Date.now() - startTime;
+      this.logger.log(`Статус индекса проекта ${projectId} получен за ${duration}ms: ${status.totalFiles} файлов`);
+
+      return {
+        totalFiles: status.totalFiles,
+        lastIndexed: status.lastIndexed?.toISOString() || null,
+        languages: status.languages,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(`Ошибка при получении статуса индекса проекта ${projectId} (${duration}ms):`, error);
+      throw error;
+    }
+  }
+
   private mapReportToDto(report: AnalysisReport): AnalysisReportDto {
     return {
       id: report.id,
@@ -411,6 +683,25 @@ export class AnalysisController {
       detailed: explanation.detailed,
       complexity: explanation.complexity || undefined,
       createdAt: explanation.createdAt,
+    };
+  }
+
+  private mapRecommendationToDto(
+    recommendation: import('./recommendations/recommendations.service').Recommendation,
+  ): RecommendationDto {
+    return {
+      id: recommendation.id,
+      title: recommendation.title,
+      description: recommendation.description,
+      category: recommendation.category.toLowerCase(),
+      priority: recommendation.priority,
+      impact: recommendation.impact,
+      suggestion: recommendation.suggestion,
+      filePath: recommendation.filePath,
+      lineStart: recommendation.lineStart || undefined,
+      lineEnd: recommendation.lineEnd || undefined,
+      codeSnippet: recommendation.codeSnippet || undefined,
+      createdAt: new Date().toISOString(), // Используем текущую дату, так как в Recommendation нет createdAt
     };
   }
 

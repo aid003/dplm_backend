@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isDevelopment, getLogLevel } from '../utils/environment.util';
 
 export interface CodeSymbol {
   name: string;
@@ -28,6 +29,11 @@ interface OpenAIChatResponse {
       content: string;
     };
   }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }
 
 interface ParsedExplanationResponse {
@@ -51,16 +57,50 @@ export class OpenAIService {
 
   async explainCode(request: ExplanationRequest): Promise<ExplanationResponse> {
     if (!this.apiKey) {
+      this.logger.error('OpenAI API key не настроен');
       throw new Error('OpenAI API key не настроен');
+    }
+
+    const startTime = Date.now();
+    const logLevel = getLogLevel();
+
+    this.logger.log(
+      `Начинаем объяснение символа: ${request.symbol.name} (${request.symbol.type})`,
+    );
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Детали запроса:', {
+        symbol: request.symbol,
+        includeComplexity: request.includeComplexity,
+        context: request.context,
+      });
     }
 
     try {
       const prompt = this.buildPrompt(request);
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Сгенерированный промпт:', { prompt });
+      }
+
       const response = await this.callOpenAI(prompt);
+      const duration = Date.now() - startTime;
+
+      this.logger.log(
+        `Объяснение символа ${request.symbol.name} получено за ${duration}ms`,
+      );
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Ответ от OpenAI:', { response });
+      }
 
       return this.parseResponse(response);
     } catch (error) {
-      this.logger.error('Ошибка при обращении к OpenAI API:', error);
+      const duration = Date.now() - startTime;
+      this.logger.error(
+        `Ошибка при обращении к OpenAI API для символа ${request.symbol.name} (${duration}ms):`,
+        error,
+      );
       throw new Error(
         `Не удалось получить объяснение кода: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`,
       );
@@ -71,17 +111,54 @@ export class OpenAIService {
     symbols: CodeSymbol[],
   ): Promise<ExplanationResponse[]> {
     if (!this.apiKey) {
+      this.logger.error('OpenAI API key не настроен');
       throw new Error('OpenAI API key не настроен');
+    }
+
+    const startTime = Date.now();
+    const logLevel = getLogLevel();
+
+    this.logger.log(`Начинаем объяснение ${symbols.length} символов`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Символы для объяснения:', {
+        count: symbols.length,
+        symbols: symbols.map((s) => ({
+          name: s.name,
+          type: s.type,
+          language: s.language,
+        })),
+      });
     }
 
     try {
       const prompt = this.buildMultipleSymbolsPrompt(symbols);
+
+      if (logLevel === 'detailed') {
+        this.logger.debug(
+          'Сгенерированный промпт для множественных символов:',
+          { prompt },
+        );
+      }
+
       const response = await this.callOpenAI(prompt);
+      const duration = Date.now() - startTime;
+
+      this.logger.log(
+        `Объяснения для ${symbols.length} символов получены за ${duration}ms`,
+      );
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Ответ от OpenAI для множественных символов:', {
+          response,
+        });
+      }
 
       return this.parseMultipleResponse(response, symbols.length);
     } catch (error) {
+      const duration = Date.now() - startTime;
       this.logger.error(
-        'Ошибка при обращении к OpenAI API для множественных символов:',
+        `Ошибка при обращении к OpenAI API для ${symbols.length} символов (${duration}ms):`,
         error,
       );
       throw new Error(
@@ -163,37 +240,74 @@ ${symbol.code}
   }
 
   private async callOpenAI(prompt: string): Promise<string> {
+    const logLevel = getLogLevel();
+    const requestStartTime = Date.now();
+
+    const requestBody = {
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Ты эксперт по анализу кода. Твоя задача - объяснять код на русском языке в структурированном JSON формате. Всегда отвечай только валидным JSON без дополнительного текста.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 2000,
+    };
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Отправляем запрос к OpenAI API:', {
+        model: requestBody.model,
+        temperature: requestBody.temperature,
+        max_tokens: requestBody.max_tokens,
+        promptLength: prompt.length,
+      });
+    } else {
+      this.logger.log(
+        `Отправляем запрос к OpenAI API (модель: ${requestBody.model}, токены: ${requestBody.max_tokens})`,
+      );
+    }
+
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Ты эксперт по анализу кода. Твоя задача - объяснять код на русском языке в структурированном JSON формате. Всегда отвечай только валидным JSON без дополнительного текста.',
-          },
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        temperature: 0.3,
-        max_tokens: 2000,
-      }),
+      body: JSON.stringify(requestBody),
     });
+
+    const requestDuration = Date.now() - requestStartTime;
 
     if (!response.ok) {
       const errorText = await response.text();
+      this.logger.error(
+        `OpenAI API error (${requestDuration}ms): ${response.status} ${errorText}`,
+      );
       throw new Error(`OpenAI API error: ${response.status} ${errorText}`);
     }
 
     const data = (await response.json()) as OpenAIChatResponse;
-    return data.choices?.[0]?.message?.content || '';
+    const responseContent = data.choices?.[0]?.message?.content || '';
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Получен ответ от OpenAI API:', {
+        duration: requestDuration,
+        responseLength: responseContent.length,
+        usage: data.usage || 'неизвестно',
+      });
+    } else {
+      this.logger.log(
+        `Получен ответ от OpenAI API за ${requestDuration}ms (${responseContent.length} символов)`,
+      );
+    }
+
+    return responseContent;
   }
 
   private parseResponse(response: string): ExplanationResponse {
@@ -208,7 +322,7 @@ ${symbol.code}
       };
     } catch {
       this.logger.warn(
-        'Не удалось распарсить ответ OpenAI, возвращаю базовое объяснение',
+        'Не удалось распарсить ответ, возвращаю базовое объяснение',
       );
       return {
         summary: 'Код требует анализа',
@@ -242,6 +356,196 @@ ${symbol.code}
           summary: `Объяснение ${index + 1} недоступно`,
           detailed: 'Объяснение недоступно',
         }));
+    }
+  }
+
+  async createEmbedding(text: string): Promise<number[]> {
+    if (!this.apiKey) {
+      this.logger.error('OpenAI API key не настроен');
+      throw new Error('OpenAI API key не настроен');
+    }
+
+    const startTime = Date.now();
+    const logLevel = getLogLevel();
+
+    this.logger.log(`Создаем embedding для текста длиной ${text.length} символов`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры создания embedding:', {
+        textLength: text.length,
+        textPreview: text.substring(0, 100) + '...',
+      });
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'text-embedding-3-small',
+          input: text,
+        }),
+      });
+
+      const requestDuration = Date.now() - startTime;
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.error(
+          `OpenAI Embeddings API error (${requestDuration}ms): ${response.status} ${errorText}`,
+        );
+        throw new Error(`OpenAI Embeddings API error: ${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      const embedding = data.data?.[0]?.embedding;
+
+      if (!embedding || !Array.isArray(embedding)) {
+        throw new Error('Неверный формат ответа от OpenAI Embeddings API');
+      }
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Получен embedding от OpenAI API:', {
+          duration: requestDuration,
+          embeddingLength: embedding.length,
+          firstValues: embedding.slice(0, 5),
+        });
+      } else {
+        this.logger.log(
+          `Embedding создан за ${requestDuration}ms (размер: ${embedding.length})`,
+        );
+      }
+
+      return embedding;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(
+        `Ошибка при создании embedding (${duration}ms):`,
+        error,
+      );
+      throw new Error(
+        `Не удалось создать embedding: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`,
+      );
+    }
+  }
+
+  async generateFileSummary(filePath: string, content: string): Promise<string> {
+    if (!this.apiKey) {
+      this.logger.error('OpenAI API key не настроен');
+      throw new Error('OpenAI API key не настроен');
+    }
+
+    const startTime = Date.now();
+    const logLevel = getLogLevel();
+
+    this.logger.log(`Генерируем краткое описание для файла ${filePath}`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры генерации описания:', {
+        filePath,
+        contentLength: content.length,
+        contentPreview: content.substring(0, 200) + '...',
+      });
+    }
+
+    try {
+      const prompt = this.buildFileSummaryPrompt(filePath, content);
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Сгенерированный промпт для описания файла:', { prompt });
+      }
+
+      const response = await this.callOpenAI(prompt);
+      const duration = Date.now() - startTime;
+
+      this.logger.log(
+        `Описание файла ${filePath} сгенерировано за ${duration}ms`,
+      );
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Ответ от OpenAI для описания файла:', { response });
+      }
+
+      return response.trim();
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(
+        `Ошибка при генерации описания файла ${filePath} (${duration}ms):`,
+        error,
+      );
+      throw new Error(
+        `Не удалось сгенерировать описание файла: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`,
+      );
+    }
+  }
+
+  calculateCosineSimilarity(embedding1: number[], embedding2: number[]): number {
+    if (embedding1.length !== embedding2.length) {
+      throw new Error('Embeddings должны иметь одинаковую размерность');
+    }
+
+    let dotProduct = 0;
+    let norm1 = 0;
+    let norm2 = 0;
+
+    for (let i = 0; i < embedding1.length; i++) {
+      dotProduct += embedding1[i] * embedding2[i];
+      norm1 += embedding1[i] * embedding1[i];
+      norm2 += embedding2[i] * embedding2[i];
+    }
+
+    if (norm1 === 0 || norm2 === 0) {
+      return 0;
+    }
+
+    return dotProduct / (Math.sqrt(norm1) * Math.sqrt(norm2));
+  }
+
+  private buildFileSummaryPrompt(filePath: string, content: string): string {
+    const language = this.detectLanguageFromPath(filePath);
+    const maxContentLength = 2000; // Ограничиваем размер контента для промпта
+    const truncatedContent = content.length > maxContentLength 
+      ? content.substring(0, maxContentLength) + '\n... (файл обрезан)'
+      : content;
+
+    return `Проанализируй следующий файл кода и создай краткое описание его назначения и функциональности:
+
+Путь к файлу: ${filePath}
+Язык программирования: ${language}
+
+Код:
+\`\`\`${language}
+${truncatedContent}
+\`\`\`
+
+Создай краткое описание (1-2 предложения) на русском языке, которое объясняет:
+- Что делает этот файл
+- Основную функциональность
+- Ключевые компоненты или функции
+
+Описание должно быть информативным и подходящим для семантического поиска.`;
+  }
+
+  private detectLanguageFromPath(filePath: string): string {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'ts':
+      case 'tsx':
+        return 'typescript';
+      case 'js':
+      case 'jsx':
+        return 'javascript';
+      case 'py':
+        return 'python';
+      case 'java':
+        return 'java';
+      case 'go':
+        return 'go';
+      default:
+        return 'text';
     }
   }
 

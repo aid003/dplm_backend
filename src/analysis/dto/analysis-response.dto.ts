@@ -323,6 +323,105 @@ export class AnalysisStatusDto {
   estimatedTimeRemaining?: number;
 }
 
+export class RecommendationDto {
+  @ApiProperty({
+    description: 'ID рекомендации',
+    example: 'uuid-string',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Заголовок рекомендации',
+    example: 'Слишком сложная функция',
+  })
+  title: string;
+
+  @ApiProperty({
+    description: 'Описание проблемы',
+    example: 'Функция getUserData имеет высокую цикломатическую сложность (12)',
+  })
+  description: string;
+
+  @ApiProperty({
+    description: 'Категория рекомендации',
+    example: 'performance',
+  })
+  category: string;
+
+  @ApiProperty({
+    description: 'Приоритет рекомендации',
+    enum: ['HIGH', 'MEDIUM', 'LOW'],
+    example: 'HIGH',
+  })
+  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+
+  @ApiProperty({
+    description: 'Описание влияния на проект',
+    example: 'Улучшит читаемость и тестируемость кода',
+  })
+  impact: string;
+
+  @ApiProperty({
+    description: 'Конкретное предложение по улучшению',
+    example: 'Разбейте функцию на более мелкие функции с единственной ответственностью',
+  })
+  suggestion: string;
+
+  @ApiProperty({
+    description: 'Путь к файлу',
+    example: 'src/users/users.service.ts',
+  })
+  filePath: string;
+
+  @ApiProperty({
+    description: 'Начальная строка',
+    required: false,
+    example: 15,
+  })
+  lineStart?: number;
+
+  @ApiProperty({
+    description: 'Конечная строка',
+    required: false,
+    example: 25,
+  })
+  lineEnd?: number;
+
+  @ApiProperty({
+    description: 'Фрагмент кода',
+    required: false,
+    example: 'function getUserData(id: string) { ... }',
+  })
+  codeSnippet?: string;
+
+  @ApiProperty({
+    description: 'Дата создания',
+    example: '2025-01-18T06:54:25.000Z',
+  })
+  createdAt: string;
+}
+
+export class RecommendationsResponseDto {
+  @ApiProperty({
+    description: 'Список рекомендаций',
+    type: [RecommendationDto],
+  })
+  recommendations: RecommendationDto[];
+
+  @ApiProperty({
+    description: 'Статистика рекомендаций',
+  })
+  stats: {
+    total: number;
+    byPriority: {
+      HIGH: number;
+      MEDIUM: number;
+      LOW: number;
+    };
+    byCategory: Record<string, number>;
+  };
+}
+
 export class AnalysisHistoryDto {
   @ApiProperty({
     description: 'Список отчетов',

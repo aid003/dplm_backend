@@ -3,6 +3,7 @@ import { promises as fsp } from 'node:fs';
 import { extname, join } from 'node:path';
 import ts from 'typescript';
 import { CodeSymbol } from './openai.service';
+import { isDevelopment, getLogLevel } from '../utils/environment.util';
 
 export interface ParsedFile {
   filePath: string;
@@ -23,6 +24,11 @@ export class AstParserService {
   private readonly logger = new Logger(AstParserService.name);
 
   async parseFile(filePath: string): Promise<ParsedFile> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(`Парсим файл ${filePath}`);
+
     const language = this.detectLanguage(filePath);
     const content = await fsp.readFile(filePath, 'utf-8');
     const lines = content.split(/\r?\n/);
@@ -32,15 +38,38 @@ export class AstParserService {
     switch (language) {
       case 'typescript':
       case 'javascript':
+        this.logger.log(`Парсим TypeScript/JavaScript файл ${filePath}`);
         symbols = this.parseTypeScriptFile(filePath, content);
         break;
       case 'python':
+        this.logger.log(`Парсим Python файл ${filePath}`);
         symbols = this.parsePythonFile(filePath, content);
+        break;
+      case 'go':
+        this.logger.log(`Парсим Go файл ${filePath}`);
+        symbols = this.parseGoFile(filePath, content);
         break;
       default:
         this.logger.warn(
           `Неподдерживаемый язык: ${language} для файла ${filePath}`,
         );
+    }
+
+    const duration = Date.now() - startTime;
+    this.logger.log(`Файл ${filePath} распарсен за ${duration}ms: найдено ${symbols.length} символов`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Детали парсинга файла:', {
+        filePath,
+        language,
+        linesCount: lines.length,
+        symbolsCount: symbols.length,
+        symbolsByType: symbols.reduce((acc, s) => {
+          acc[s.type] = (acc[s.type] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+        duration,
+      });
     }
 
     return {
@@ -55,16 +84,64 @@ export class AstParserService {
     projectPath: string,
     languages: string[] = ['typescript', 'javascript', 'python'],
   ): Promise<ParsedFile[]> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(`Парсим проект ${projectPath} для языков: ${languages.join(', ')}`);
+
     const files = await this.findSourceFiles(projectPath, languages);
+    this.logger.log(`Найдено ${files.length} файлов для парсинга`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Файлы для парсинга:', {
+        projectPath,
+        languages,
+        totalFiles: files.length,
+        filesByLanguage: files.reduce((acc, file) => {
+          const lang = this.detectLanguage(file);
+          acc[lang] = (acc[lang] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+      });
+    }
+
     const results: ParsedFile[] = [];
+    let successCount = 0;
+    let errorCount = 0;
 
     for (const file of files) {
       try {
         const parsed = await this.parseFile(file);
         results.push(parsed);
+        successCount++;
       } catch (error) {
+        errorCount++;
         this.logger.warn(`Не удалось распарсить файл ${file}:`, error);
       }
+    }
+
+    const totalDuration = Date.now() - startTime;
+    const totalSymbols = results.reduce((sum, f) => sum + f.symbols.length, 0);
+
+    this.logger.log(`Парсинг проекта завершен за ${totalDuration}ms: успешно ${successCount} файлов, ошибок ${errorCount}, найдено ${totalSymbols} символов`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Статистика парсинга проекта:', {
+        projectPath,
+        totalFiles: files.length,
+        successCount,
+        errorCount,
+        totalSymbols,
+        filesByLanguage: results.reduce((acc, f) => {
+          acc[f.language] = (acc[f.language] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+        symbolsByLanguage: results.reduce((acc, f) => {
+          acc[f.language] = (acc[f.language] || 0) + f.symbols.length;
+          return acc;
+        }, {} as Record<string, number>),
+        totalDuration,
+      });
     }
 
     return results;
@@ -299,6 +376,137 @@ export class AstParserService {
       }
       if (trimmed.includes('try') || trimmed.includes('catch')) {
         complexity += 1;
+      }
+    }
+
+    return Math.max(1, complexity);
+  }
+
+  private parseGoFile(filePath: string, content: string): CodeSymbol[] {
+    const symbols: CodeSymbol[] = [];
+    const lines = content.split(/\r?\n/);
+
+    // Регулярные выражения для поиска Go конструкций
+    const patterns = [
+      // Functions
+      {
+        regex: /^func\s+(\w+)\s*\([^)]*\)\s*(?:\w+\s+)?{/gm,
+        type: 'function',
+        nameIndex: 1,
+      },
+      // Methods
+      {
+        regex: /^func\s+\([^)]+\)\s+(\w+)\s*\([^)]*\)\s*(?:\w+\s+)?{/gm,
+        type: 'method',
+        nameIndex: 1,
+      },
+      // Structs
+      {
+        regex: /^type\s+(\w+)\s+struct\s*{/gm,
+        type: 'class',
+        nameIndex: 1,
+      },
+      // Interfaces
+      {
+        regex: /^type\s+(\w+)\s+interface\s*{/gm,
+        type: 'interface',
+        nameIndex: 1,
+      },
+      // Variables
+      {
+        regex: /^(?:var|const)\s+(\w+)\s*(?:=|:)/gm,
+        type: 'variable',
+        nameIndex: 1,
+      },
+      // Constants
+      {
+        regex: /^const\s+(\w+)\s*=/gm,
+        type: 'variable',
+        nameIndex: 1,
+      },
+      // Packages
+      {
+        regex: /^package\s+(\w+)/gm,
+        type: 'type',
+        nameIndex: 1,
+      },
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.regex.exec(content)) !== null) {
+        const name = match[pattern.nameIndex];
+        const lineNumber = content.substring(0, match.index).split('\n').length;
+        const lineContent = lines[lineNumber - 1] || '';
+
+        // Находим конец блока для функций, методов, структур и интерфейсов
+        let endLine = lineNumber;
+        if (['function', 'method', 'class', 'interface'].includes(pattern.type)) {
+          endLine = this.findGoBlockEnd(content, match.index);
+        }
+
+        symbols.push({
+          name,
+          type: pattern.type as 'function' | 'class' | 'method' | 'variable' | 'interface' | 'type',
+          lineStart: lineNumber,
+          lineEnd: endLine,
+          code: lineContent,
+          language: 'go',
+        });
+      }
+    }
+
+    return symbols;
+  }
+
+  private findGoBlockEnd(content: string, startIndex: number): number {
+    const lines = content.split('\n');
+    const startLine = content.substring(0, startIndex).split('\n').length;
+    let braceCount = 0;
+    let foundOpeningBrace = false;
+
+    for (let i = startLine - 1; i < lines.length; i++) {
+      const line = lines[i];
+      
+      for (const char of line) {
+        if (char === '{') {
+          braceCount++;
+          foundOpeningBrace = true;
+        } else if (char === '}') {
+          braceCount--;
+          if (foundOpeningBrace && braceCount === 0) {
+            return i + 1;
+          }
+        }
+      }
+    }
+
+    return startLine;
+  }
+
+  private calculateGoComplexity(code: string): number {
+    let complexity = 1;
+
+    // Подсчитываем условные конструкции
+    const conditionalPatterns = [
+      /\bif\s+/g,
+      /\belse\s+/g,
+      /\bfor\s+/g,
+      /\brange\s+/g,
+      /\bswitch\s+/g,
+      /\bcase\s+/g,
+      /\bdefault\s*:/g,
+      /\bselect\s+/g,
+      /\bgo\s+/g,
+      /\bdefer\s+/g,
+      /\bpanic\s*\(/g,
+      /\brecover\s*\(/g,
+    ];
+
+    for (const pattern of conditionalPatterns) {
+      const matches = code.match(pattern);
+      if (matches) {
+        complexity += matches.length;
       }
     }
 

@@ -7,6 +7,8 @@ import { ExplanationService } from './explanation/explanation.service';
 import { RecommendationsService } from './recommendations/recommendations.service';
 import { OpenAIService } from './explanation/openai.service';
 import { AstParserService } from './explanation/ast-parser.service';
+import { SemanticSearchService } from './explanation/semantic-search.service';
+import { DependencyAnalyzerService } from './explanation/dependency-analyzer.service';
 import { DatabaseService } from '../database/database.service';
 import { ProjectsService } from '../projects/projects.service';
 
@@ -20,6 +22,8 @@ import { ProjectsService } from '../projects/projects.service';
     RecommendationsService,
     OpenAIService,
     AstParserService,
+    SemanticSearchService,
+    DependencyAnalyzerService,
     DatabaseService,
     ProjectsService,
   ],
@@ -28,6 +32,8 @@ import { ProjectsService } from '../projects/projects.service';
     VulnerabilityService,
     ExplanationService,
     RecommendationsService,
+    SemanticSearchService,
+    DependencyAnalyzerService,
   ],
 })
 export class AnalysisModule {}

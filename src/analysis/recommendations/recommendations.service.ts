@@ -1,7 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { ProjectsService } from '../../projects/projects.service';
 import { AstParserService } from '../explanation/ast-parser.service';
+import { isDevelopment, getLogLevel } from '../utils/environment.util';
+import { AnalysisType } from '../dto/analysis-request.dto';
+import { AnalysisStatus } from '../dto/analysis-response.dto';
 
 export interface CodeSmell {
   type: string;
@@ -57,6 +60,19 @@ export class RecommendationsService {
     projectId: string,
     options: { languages?: string[] } = {},
   ): Promise<Recommendation[]> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(`Начинаем анализ рекомендаций для проекта ${projectId} пользователя ${userId}`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры анализа рекомендаций:', {
+        userId,
+        projectId,
+        options,
+      });
+    }
+
     const project = await this.projectsService.findByIdForUser(
       userId,
       projectId,
@@ -65,17 +81,72 @@ export class RecommendationsService {
       'typescript',
       'javascript',
       'python',
+      'go',
     ];
+
+    this.logger.log(`Парсим проект для анализа рекомендаций: языки ${languages.join(', ')}`);
 
     const parsedFiles = await this.astParserService.parseProject(
       project.extractedPath,
       languages,
     );
+
+    const totalSymbols = parsedFiles.reduce((sum, f) => sum + f.symbols.length, 0);
+    this.logger.log(`Найдено ${parsedFiles.length} файлов с ${totalSymbols} символами для анализа рекомендаций`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Статистика парсинга для рекомендаций:', {
+        totalFiles: parsedFiles.length,
+        totalSymbols,
+        filesByLanguage: parsedFiles.reduce((acc, f) => {
+          acc[f.language] = (acc[f.language] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+      });
+    }
+
     const recommendations: Recommendation[] = [];
 
     for (const file of parsedFiles) {
+      const fileStartTime = Date.now();
+      this.logger.log(`Анализируем файл ${file.filePath} (${file.symbols.length} символов)`);
+
       const fileRecommendations = this.analyzeParsedFile(file);
       recommendations.push(...fileRecommendations);
+
+      const fileDuration = Date.now() - fileStartTime;
+      this.logger.log(`Файл ${file.filePath} проанализирован за ${fileDuration}ms: найдено ${fileRecommendations.length} рекомендаций`);
+
+      if (logLevel === 'detailed' && fileRecommendations.length > 0) {
+        this.logger.debug(`Рекомендации для файла ${file.filePath}:`, {
+          count: fileRecommendations.length,
+          byCategory: fileRecommendations.reduce((acc, r) => {
+            acc[r.category] = (acc[r.category] || 0) + 1;
+            return acc;
+          }, {} as Record<string, number>),
+          byPriority: fileRecommendations.reduce((acc, r) => {
+            acc[r.priority] = (acc[r.priority] || 0) + 1;
+            return acc;
+          }, {} as Record<string, number>),
+        });
+      }
+    }
+
+    const totalDuration = Date.now() - startTime;
+    const stats = this.calculateRecommendationStats(recommendations);
+
+    this.logger.log(`Анализ рекомендаций для проекта ${projectId} завершен за ${totalDuration}ms: найдено ${recommendations.length} рекомендаций`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Статистика рекомендаций:', {
+        projectId,
+        totalRecommendations: recommendations.length,
+        byCategory: stats.byCategory,
+        byPriority: stats.byPriority,
+        totalDuration,
+      });
+    } else {
+      this.logger.log(`Рекомендации по категориям: ${Object.entries(stats.byCategory).map(([cat, count]) => `${cat}: ${count}`).join(', ')}`);
     }
 
     return recommendations;
@@ -329,5 +400,145 @@ export class RecommendationsService {
     }
 
     return maxNesting;
+  }
+
+  async getRecommendationsForProject(
+    userId: string,
+    projectId: string,
+    filters: {
+      category?: string;
+      priority?: 'HIGH' | 'MEDIUM' | 'LOW';
+      filePath?: string;
+    } = {},
+  ): Promise<{
+    recommendations: Recommendation[];
+    stats: {
+      total: number;
+      byPriority: { HIGH: number; MEDIUM: number; LOW: number };
+      byCategory: Record<string, number>;
+    };
+  }> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(`Получаем рекомендации для проекта ${projectId} пользователя ${userId}`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры запроса рекомендаций:', {
+        userId,
+        projectId,
+        filters,
+      });
+    }
+
+    // Проверяем права пользователя на проект
+    await this.projectsService.findByIdForUser(userId, projectId);
+
+    // Ищем последний завершенный анализ типа RECOMMENDATION или FULL
+    const analysisReport = await this.databaseService.analysisReport.findFirst({
+      where: {
+        projectId,
+        type: {
+          in: [AnalysisType.RECOMMENDATION, AnalysisType.FULL],
+        },
+        status: AnalysisStatus.COMPLETED,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (!analysisReport) {
+      throw new NotFoundException('Не найдено завершенных анализов типа RECOMMENDATION или FULL для данного проекта');
+    }
+
+    this.logger.log(`Найден анализ ${analysisReport.id} типа ${analysisReport.type} от ${analysisReport.createdAt}`);
+
+    // Извлекаем рекомендации из результата анализа
+    const result = analysisReport.result as any;
+    let recommendations: Recommendation[] = [];
+
+    if (result?.recommendations) {
+      if (Array.isArray(result.recommendations)) {
+        // Для анализа типа RECOMMENDATION
+        recommendations = result.recommendations;
+      } else if (result.recommendations.items && Array.isArray(result.recommendations.items)) {
+        // Для анализа типа FULL
+        recommendations = result.recommendations.items;
+      }
+    }
+
+    this.logger.log(`Извлечено ${recommendations.length} рекомендаций из анализа ${analysisReport.id}`);
+
+    // Применяем фильтры
+    let filteredRecommendations = recommendations;
+
+    if (filters.category) {
+      filteredRecommendations = filteredRecommendations.filter(
+        (rec) => rec.category.toLowerCase() === filters.category!.toLowerCase(),
+      );
+    }
+
+    if (filters.priority) {
+      filteredRecommendations = filteredRecommendations.filter(
+        (rec) => rec.priority === filters.priority,
+      );
+    }
+
+    if (filters.filePath) {
+      filteredRecommendations = filteredRecommendations.filter(
+        (rec) => rec.filePath.includes(filters.filePath!),
+      );
+    }
+
+    // Удаляем дубликаты по id
+    const uniqueRecommendations = filteredRecommendations.filter(
+      (rec, index, self) => index === self.findIndex((r) => r.id === rec.id),
+    );
+
+    // Вычисляем статистику
+    const stats = this.calculateRecommendationStats(uniqueRecommendations);
+
+    const duration = Date.now() - startTime;
+    this.logger.log(`Рекомендации для проекта ${projectId} получены за ${duration}ms: ${uniqueRecommendations.length} рекомендаций после фильтрации`);
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Статистика рекомендаций:', {
+        projectId,
+        totalRecommendations: uniqueRecommendations.length,
+        byCategory: stats.byCategory,
+        byPriority: stats.byPriority,
+        filters,
+        duration,
+      });
+    }
+
+    return {
+      recommendations: uniqueRecommendations,
+      stats: {
+        total: uniqueRecommendations.length,
+        byPriority: {
+          HIGH: stats.byPriority.HIGH || 0,
+          MEDIUM: stats.byPriority.MEDIUM || 0,
+          LOW: stats.byPriority.LOW || 0,
+        },
+        byCategory: stats.byCategory,
+      },
+    };
+  }
+
+  private calculateRecommendationStats(recommendations: Recommendation[]): {
+    byCategory: Record<string, number>;
+    byPriority: Record<string, number>;
+  } {
+    const byCategory: Record<string, number> = {};
+    const byPriority: Record<string, number> = {};
+
+    for (const rec of recommendations) {
+      byCategory[rec.category] = (byCategory[rec.category] || 0) + 1;
+      byPriority[rec.priority] = (byPriority[rec.priority] || 0) + 1;
+    }
+
+    return { byCategory, byPriority };
   }
 }

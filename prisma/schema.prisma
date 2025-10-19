@@ -38,6 +38,7 @@ model Project {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   analysisReports AnalysisReport[]
+  fileIndexes   FileIndex[]
 
   @@index([userId])
 }
@@ -101,6 +102,24 @@ model CodeExplanation {
   @@index([reportId])
   @@index([filePath])
   @@index([symbolType])
+}
+
+model FileIndex {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  filePath    String
+  summary     String
+  embedding   Json     // Массив чисел для хранения embedding
+  language    String
+  fileSize    Int
+  lastModified DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([projectId, filePath])
+  @@index([projectId])
+  @@index([language])
 }
 
 enum AnalysisType {

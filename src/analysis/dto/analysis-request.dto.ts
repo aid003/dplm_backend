@@ -54,6 +54,15 @@ export class AnalysisRequestDto {
   filePath?: string;
 
   @ApiProperty({
+    description: 'Тема или запрос для целевого анализа (опционально). Если указано, система найдет только релевантные файлы',
+    required: false,
+    example: 'как работает авторизация пользователей',
+  })
+  @IsOptional()
+  @IsString()
+  query?: string;
+
+  @ApiProperty({
     description: 'Дополнительные опции анализа',
     required: false,
     type: AnalysisOptionsDto,
