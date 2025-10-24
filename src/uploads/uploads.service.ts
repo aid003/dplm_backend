@@ -12,6 +12,7 @@ import {
 } from 'node:timers';
 import { Subject } from 'rxjs';
 import { DatabaseService } from '../database/database.service';
+import { SemanticSearchService } from '../analysis/explanation/semantic-search.service';
 import type {
   ProgressEvent,
   ExtractionState,
@@ -65,7 +66,10 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
     ttlMs: 1000 * 60 * 60 * 24, // 24h
   };
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly semanticSearchService: SemanticSearchService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     await ensureDirectoryExists(this.config.baseDir);
@@ -188,6 +192,9 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
       // Обновим статус проекта до READY по jobId
       try {
         await this.databaseService.updateProjectStatusByJobId(jobId, 'READY');
+
+        // Запускаем автоматическую индексацию проекта в фоне
+        void this.startProjectIndexing(jobId);
       } catch (e) {
         this.logger.warn(
           `Failed to set project READY for job ${jobId}: ${String(e)}`,
@@ -245,6 +252,44 @@ export class UploadsService implements OnModuleInit, OnModuleDestroy {
     await Promise.allSettled(
       targets.map((p) => fsp.rm(p, { recursive: true, force: true })),
     );
+  }
+
+  private async startProjectIndexing(jobId: string): Promise<void> {
+    try {
+      this.logger.log(`Запускаем автоматическую индексацию для job ${jobId}`);
+
+      // Получаем информацию о проекте по jobId
+      const project = await this.databaseService.project.findUnique({
+        where: { jobId },
+        select: { id: true, userId: true, name: true },
+      });
+
+      if (!project) {
+        this.logger.warn(`Проект не найден для job ${jobId}`);
+        return;
+      }
+
+      this.logger.log(
+        `Начинаем индексацию проекта ${project.name} (${project.id}) для пользователя ${project.userId}`,
+      );
+
+      // Запускаем индексацию в фоне
+      const result = await this.semanticSearchService.indexProject(
+        project.userId,
+        project.id,
+        ['typescript', 'javascript', 'python', 'go'],
+      );
+
+      this.logger.log(
+        `Автоматическая индексация проекта ${project.id} завершена: проиндексировано ${result.indexedFiles} файлов, пропущено ${result.skippedFiles}, ошибок ${result.errors}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Ошибка при автоматической индексации проекта для job ${jobId}:`,
+        error,
+      );
+      // Не прерываем основной процесс из-за ошибки индексации
+    }
   }
 
   private async cleanupOldFiles(): Promise<void> {

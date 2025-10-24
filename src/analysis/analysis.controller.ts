@@ -49,7 +49,7 @@ import {
   AnalysisProgressDto,
   VulnSeverity,
 } from './dto/analysis-response.dto';
-import { isDevelopment, getLogLevel } from './utils/environment.util';
+import { getLogLevel } from './utils/environment.util';
 
 interface AnalysisReport {
   id: string;
@@ -145,7 +145,9 @@ export class AnalysisController {
     const logLevel = getLogLevel();
     const startTime = Date.now();
 
-    this.logger.log(`Запрос на запуск анализа проекта ${projectId} от пользователя ${req.user.id}`);
+    this.logger.log(
+      `Запрос на запуск анализа проекта ${projectId} от пользователя ${req.user.id}`,
+    );
 
     if (logLevel === 'detailed') {
       this.logger.debug('Параметры запроса анализа:', {
@@ -176,7 +178,10 @@ export class AnalysisController {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.logger.error(`Ошибка при запуске анализа проекта ${projectId} (${duration}ms):`, error);
+      this.logger.error(
+        `Ошибка при запуске анализа проекта ${projectId} (${duration}ms):`,
+        error,
+      );
       throw error;
     }
   }
@@ -202,11 +207,16 @@ export class AnalysisController {
     try {
       const report = await this.analysisService.getAnalysisStatus(reportId);
       const duration = Date.now() - startTime;
-      this.logger.log(`Результаты анализа ${reportId} получены за ${duration}ms`);
+      this.logger.log(
+        `Результаты анализа ${reportId} получены за ${duration}ms`,
+      );
       return this.mapReportToDto(report as unknown as AnalysisReport);
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.logger.error(`Ошибка при получении результатов анализа ${reportId} (${duration}ms):`, error);
+      this.logger.error(
+        `Ошибка при получении результатов анализа ${reportId} (${duration}ms):`,
+        error,
+      );
       throw error;
     }
   }
@@ -296,7 +306,9 @@ export class AnalysisController {
     const logLevel = getLogLevel();
     const startTime = Date.now();
 
-    this.logger.log(`Запрос истории анализов проекта ${projectId} от пользователя ${req.user.id}`);
+    this.logger.log(
+      `Запрос истории анализов проекта ${projectId} от пользователя ${req.user.id}`,
+    );
 
     if (logLevel === 'detailed') {
       this.logger.debug('Параметры запроса истории:', {
@@ -317,7 +329,9 @@ export class AnalysisController {
       )) as AnalysisHistoryResult;
 
       const duration = Date.now() - startTime;
-      this.logger.log(`История анализов проекта ${projectId} получена за ${duration}ms: найдено ${result.total} отчетов`);
+      this.logger.log(
+        `История анализов проекта ${projectId} получена за ${duration}ms: найдено ${result.total} отчетов`,
+      );
 
       return {
         reports: result.reports.map((report) => this.mapReportToDto(report)),
@@ -326,7 +340,10 @@ export class AnalysisController {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.logger.error(`Ошибка при получении истории анализов проекта ${projectId} (${duration}ms):`, error);
+      this.logger.error(
+        `Ошибка при получении истории анализов проекта ${projectId} (${duration}ms):`,
+        error,
+      );
       throw error;
     }
   }
@@ -444,7 +461,8 @@ export class AnalysisController {
   @ApiQuery({
     name: 'category',
     required: false,
-    description: 'Категория рекомендации (например: performance, security, code-quality)',
+    description:
+      'Категория рекомендации (например: performance, security, code-quality)',
     example: 'performance',
   })
   @ApiQuery({
@@ -464,7 +482,9 @@ export class AnalysisController {
     description: 'Список рекомендаций с статистикой',
     type: RecommendationsResponseDto,
   })
-  @ApiNotFoundResponse({ description: 'Проект не найден или нет завершенных анализов' })
+  @ApiNotFoundResponse({
+    description: 'Проект не найден или нет завершенных анализов',
+  })
   @ApiUnauthorizedResponse({ description: 'Не авторизован' })
   async getRecommendations(
     @Request() req: ExpressRequest & { user: Omit<User, 'passwordHash'> },
@@ -476,7 +496,9 @@ export class AnalysisController {
     const logLevel = getLogLevel();
     const startTime = Date.now();
 
-    this.logger.log(`Запрос рекомендаций проекта ${projectId} от пользователя ${req.user.id}`);
+    this.logger.log(
+      `Запрос рекомендаций проекта ${projectId} от пользователя ${req.user.id}`,
+    );
 
     if (logLevel === 'detailed') {
       this.logger.debug('Параметры запроса рекомендаций:', {
@@ -489,99 +511,38 @@ export class AnalysisController {
     }
 
     try {
-      const result = await this.recommendationsService.getRecommendationsForProject(
-        req.user.id,
-        projectId,
-        { category, priority, filePath },
-      );
+      const result =
+        await this.recommendationsService.getRecommendationsForProject(
+          req.user.id,
+          projectId,
+          { category, priority, filePath },
+        );
 
       const duration = Date.now() - startTime;
-      this.logger.log(`Рекомендации проекта ${projectId} получены за ${duration}ms: ${result.recommendations.length} рекомендаций`);
+      this.logger.log(
+        `Рекомендации проекта ${projectId} получены за ${duration}ms: ${result.recommendations.length} рекомендаций`,
+      );
 
       return {
-        recommendations: result.recommendations.map((rec) => this.mapRecommendationToDto(rec)),
+        recommendations: result.recommendations.map((rec) =>
+          this.mapRecommendationToDto(rec),
+        ),
         stats: result.stats,
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.logger.error(`Ошибка при получении рекомендаций проекта ${projectId} (${duration}ms):`, error);
-      throw error;
-    }
-  }
-
-  @Post('projects/:projectId/index')
-  @ApiOperation({ summary: 'Создать или обновить индекс файлов проекта для семантического поиска' })
-  @ApiParam({
-    name: 'projectId',
-    description: 'ID проекта',
-    schema: { type: 'string', format: 'uuid' },
-  })
-  @ApiOkResponse({
-    description: 'Индекс создан или обновлен',
-    schema: {
-      type: 'object',
-      properties: {
-        success: { type: 'boolean' },
-        indexedFiles: { type: 'number' },
-        skippedFiles: { type: 'number' },
-        errors: { type: 'number' },
-        duration: { type: 'number' },
-        message: { type: 'string' },
-      },
-    },
-  })
-  @ApiNotFoundResponse({ description: 'Проект не найден' })
-  @ApiUnauthorizedResponse({ description: 'Не авторизован' })
-  async indexProject(
-    @Request() req: ExpressRequest & { user: Omit<User, 'passwordHash'> },
-    @Param('projectId', new ParseUUIDPipe()) projectId: string,
-  ): Promise<{
-    success: boolean;
-    indexedFiles: number;
-    skippedFiles: number;
-    errors: number;
-    duration: number;
-    message: string;
-  }> {
-    const logLevel = getLogLevel();
-    const startTime = Date.now();
-
-    this.logger.log(`Запрос на индексацию проекта ${projectId} от пользователя ${req.user.id}`);
-
-    if (logLevel === 'detailed') {
-      this.logger.debug('Параметры индексации:', {
-        userId: req.user.id,
-        projectId,
-      });
-    }
-
-    try {
-      const result = await this.semanticSearchService.indexProject(
-        req.user.id,
-        projectId,
-        ['typescript', 'javascript', 'python', 'go'],
+      this.logger.error(
+        `Ошибка при получении рекомендаций проекта ${projectId} (${duration}ms):`,
+        error,
       );
-
-      const duration = Date.now() - startTime;
-      this.logger.log(`Индексация проекта ${projectId} завершена за ${duration}ms: проиндексировано ${result.indexedFiles} файлов`);
-
-      return {
-        success: true,
-        indexedFiles: result.indexedFiles,
-        skippedFiles: result.skippedFiles,
-        errors: result.errors,
-        duration: result.duration,
-        message: `Индексация завершена: проиндексировано ${result.indexedFiles} файлов, пропущено ${result.skippedFiles}, ошибок ${result.errors}`,
-      };
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      this.logger.error(`Ошибка при индексации проекта ${projectId} (${duration}ms):`, error);
       throw error;
     }
   }
 
   @Get('projects/:projectId/index/status')
-  @ApiOperation({ summary: 'Получить статус индекса файлов проекта' })
+  @ApiOperation({
+    summary: 'Получить статус индекса файлов проекта в Weaviate',
+  })
   @ApiParam({
     name: 'projectId',
     description: 'ID проекта',
@@ -608,19 +569,26 @@ export class AnalysisController {
     lastIndexed: string | null;
     languages: Record<string, number>;
   }> {
-    const logLevel = getLogLevel();
     const startTime = Date.now();
 
-    this.logger.log(`Запрос статуса индекса проекта ${projectId} от пользователя ${req.user.id}`);
+    this.logger.log(
+      `Запрос статуса индекса проекта ${projectId} от пользователя ${req.user.id}`,
+    );
 
     try {
       // Проверяем права доступа к проекту
-      await this.analysisService.getProjectAnalysisHistory(req.user.id, projectId, { limit: 1 });
+      await this.analysisService.getProjectAnalysisHistory(
+        req.user.id,
+        projectId,
+        { limit: 1 },
+      );
 
       const status = await this.semanticSearchService.getIndexStatus(projectId);
 
       const duration = Date.now() - startTime;
-      this.logger.log(`Статус индекса проекта ${projectId} получен за ${duration}ms: ${status.totalFiles} файлов`);
+      this.logger.log(
+        `Статус индекса проекта ${projectId} получен за ${duration}ms: ${status.totalFiles} файлов`,
+      );
 
       return {
         totalFiles: status.totalFiles,
@@ -629,7 +597,10 @@ export class AnalysisController {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      this.logger.error(`Ошибка при получении статуса индекса проекта ${projectId} (${duration}ms):`, error);
+      this.logger.error(
+        `Ошибка при получении статуса индекса проекта ${projectId} (${duration}ms):`,
+        error,
+      );
       throw error;
     }
   }

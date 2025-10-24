@@ -8,6 +8,7 @@ import { RecommendationsService } from './recommendations/recommendations.servic
 import { OpenAIService } from './explanation/openai.service';
 import { AstParserService } from './explanation/ast-parser.service';
 import { SemanticSearchService } from './explanation/semantic-search.service';
+import { WeaviateService } from './explanation/weaviate.service';
 import { DependencyAnalyzerService } from './explanation/dependency-analyzer.service';
 import { DatabaseService } from '../database/database.service';
 import { ProjectsService } from '../projects/projects.service';
@@ -23,6 +24,7 @@ import { ProjectsService } from '../projects/projects.service';
     OpenAIService,
     AstParserService,
     SemanticSearchService,
+    WeaviateService,
     DependencyAnalyzerService,
     DatabaseService,
     ProjectsService,
@@ -33,6 +35,7 @@ import { ProjectsService } from '../projects/projects.service';
     ExplanationService,
     RecommendationsService,
     SemanticSearchService,
+    WeaviateService,
     DependencyAnalyzerService,
   ],
 })
