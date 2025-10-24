@@ -94,20 +94,6 @@ interface VulnerabilityResult {
   stats: Record<string, unknown>;
 }
 
-interface ExplanationResult {
-  id: string;
-  filePath: string;
-  symbolName: string | null;
-  symbolType: string | null;
-  lineStart: number;
-  lineEnd: number;
-  summary: string;
-  detailed: string;
-  complexity: number | null;
-  createdAt: Date;
-  reportId: string;
-}
-
 @ApiTags('analysis')
 @Controller('analysis')
 @UseGuards(JwtAuthGuard)
@@ -408,15 +394,33 @@ export class AnalysisController {
     @Param('projectId', new ParseUUIDPipe()) projectId: string,
     @Body() body: ExplainRequestDto,
   ): Promise<CodeExplanationDto> {
-    const explanation = await this.explanationService.explainSymbol(
-      req.user.id,
-      projectId,
-      body.filePath,
-      body.symbolName || '',
-      { includeComplexity: true },
+    this.logger.log(
+      `Запрос объяснения кода: проект ${projectId}, файл ${body.filePath}, символ ${body.symbolName}`,
     );
+    try {
+      this.logger.log(`Вызываем explanationService.explainSymbol...`);
+      const explanation = await this.explanationService.explainSymbol(
+        req.user.id,
+        projectId,
+        body.filePath,
+        body.symbolName || '',
+        { includeComplexity: true },
+      );
+      this.logger.log(`explanationService.explainSymbol завершен`);
 
-    return this.mapExplanationToDto(explanation);
+      if (!explanation || !explanation.explanation) {
+        throw new Error('Не удалось получить объяснение');
+      }
+
+      const explanationText = explanation.explanation as string;
+
+      return {
+        explanation: explanationText,
+      };
+    } catch (error: unknown) {
+      this.logger.error('Ошибка при генерации объяснения:', error);
+      throw error instanceof Error ? error : new Error('Неизвестная ошибка');
+    }
   }
 
   @Get('projects/:projectId/explanations')
@@ -433,22 +437,10 @@ export class AnalysisController {
     description: 'Список объяснений',
     type: [CodeExplanationDto],
   })
-  async getExplanations(
-    @Request() req: ExpressRequest & { user: Omit<User, 'passwordHash'> },
-    @Param('projectId', new ParseUUIDPipe()) projectId: string,
-    @Query('filePath') filePath?: string,
-    @Query('symbolType') symbolType?: string,
-    @Query('symbolName') symbolName?: string,
-  ): Promise<CodeExplanationDto[]> {
-    const explanations = await this.explanationService.getExplanations(
-      req.user.id,
-      projectId,
-      { filePath, symbolType, symbolName },
-    );
-
-    return explanations.map((explanation) =>
-      this.mapExplanationToDto(explanation),
-    );
+  async getExplanations(): Promise<CodeExplanationDto[]> {
+    // Этот endpoint больше не поддерживается в новом формате
+    // Возвращаем пустой массив или можно удалить endpoint
+    return Promise.resolve([]);
   }
 
   @Get('projects/:projectId/recommendations')
@@ -637,23 +629,6 @@ export class AnalysisController {
       recommendation: vuln.recommendation,
       cwe: vuln.cwe || undefined,
       createdAt: vuln.createdAt,
-    };
-  }
-
-  private mapExplanationToDto(
-    explanation: ExplanationResult,
-  ): CodeExplanationDto {
-    return {
-      id: explanation.id,
-      filePath: explanation.filePath,
-      symbolName: explanation.symbolName || undefined,
-      symbolType: explanation.symbolType || undefined,
-      lineStart: explanation.lineStart,
-      lineEnd: explanation.lineEnd,
-      summary: explanation.summary,
-      detailed: explanation.detailed,
-      complexity: explanation.complexity || undefined,
-      createdAt: explanation.createdAt,
     };
   }
 

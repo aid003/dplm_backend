@@ -23,7 +23,7 @@ export interface ComplexityMetrics {
 export class AstParserService {
   private readonly logger = new Logger(AstParserService.name);
 
-  async parseFile(filePath: string): Promise<ParsedFile> {
+  async parseFile(filePath: string, relativePath?: string): Promise<ParsedFile> {
     const logLevel = getLogLevel();
     const startTime = Date.now();
 
@@ -73,7 +73,7 @@ export class AstParserService {
     }
 
     return {
-      filePath,
+      filePath: relativePath || filePath,
       language,
       symbols,
       lines,

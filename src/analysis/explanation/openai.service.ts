@@ -23,6 +23,21 @@ export interface ExplanationResponse {
   complexity?: number;
 }
 
+export interface CohesiveExplanationRequest {
+  userQuestion: string;
+  relevantFiles: Array<{
+    filePath: string;
+    content: string;
+    language: string;
+  }>;
+  targetFilePath?: string;
+  targetSymbolName?: string;
+}
+
+export interface CohesiveExplanationResponse {
+  explanation: string;
+}
+
 interface OpenAIChatResponse {
   choices: Array<{
     message: {
@@ -368,7 +383,9 @@ ${symbol.code}
     const startTime = Date.now();
     const logLevel = getLogLevel();
 
-    this.logger.log(`Создаем embedding для текста длиной ${text.length} символов`);
+    this.logger.log(
+      `Создаем embedding для текста длиной ${text.length} символов`,
+    );
 
     if (logLevel === 'detailed') {
       this.logger.debug('Параметры создания embedding:', {
@@ -397,7 +414,9 @@ ${symbol.code}
         this.logger.error(
           `OpenAI Embeddings API error (${requestDuration}ms): ${response.status} ${errorText}`,
         );
-        throw new Error(`OpenAI Embeddings API error: ${response.status} ${errorText}`);
+        throw new Error(
+          `OpenAI Embeddings API error: ${response.status} ${errorText}`,
+        );
       }
 
       const data = await response.json();
@@ -432,7 +451,10 @@ ${symbol.code}
     }
   }
 
-  async generateFileSummary(filePath: string, content: string): Promise<string> {
+  async generateFileSummary(
+    filePath: string,
+    content: string,
+  ): Promise<string> {
     if (!this.apiKey) {
       this.logger.error('OpenAI API key не настроен');
       throw new Error('OpenAI API key не настроен');
@@ -455,7 +477,9 @@ ${symbol.code}
       const prompt = this.buildFileSummaryPrompt(filePath, content);
 
       if (logLevel === 'detailed') {
-        this.logger.debug('Сгенерированный промпт для описания файла:', { prompt });
+        this.logger.debug('Сгенерированный промпт для описания файла:', {
+          prompt,
+        });
       }
 
       const response = await this.callOpenAI(prompt);
@@ -482,7 +506,10 @@ ${symbol.code}
     }
   }
 
-  calculateCosineSimilarity(embedding1: number[], embedding2: number[]): number {
+  calculateCosineSimilarity(
+    embedding1: number[],
+    embedding2: number[],
+  ): number {
     if (embedding1.length !== embedding2.length) {
       throw new Error('Embeddings должны иметь одинаковую размерность');
     }
@@ -507,9 +534,10 @@ ${symbol.code}
   private buildFileSummaryPrompt(filePath: string, content: string): string {
     const language = this.detectLanguageFromPath(filePath);
     const maxContentLength = 2000; // Ограничиваем размер контента для промпта
-    const truncatedContent = content.length > maxContentLength 
-      ? content.substring(0, maxContentLength) + '\n... (файл обрезан)'
-      : content;
+    const truncatedContent =
+      content.length > maxContentLength
+        ? content.substring(0, maxContentLength) + '\n... (файл обрезан)'
+        : content;
 
     return `Проанализируй следующий файл кода и создай краткое описание его назначения и функциональности:
 
@@ -547,6 +575,218 @@ ${truncatedContent}
       default:
         return 'text';
     }
+  }
+
+  async generateCohesiveExplanation(
+    request: CohesiveExplanationRequest,
+  ): Promise<CohesiveExplanationResponse> {
+    if (!this.apiKey) {
+      this.logger.error('OpenAI API key не настроен');
+      throw new Error('OpenAI API key не настроен');
+    }
+
+    const startTime = Date.now();
+    const logLevel = getLogLevel();
+
+    this.logger.log(
+      `Генерируем связное объяснение для ${request.relevantFiles.length} файлов`,
+    );
+
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры связного объяснения:', {
+        userQuestion: request.userQuestion,
+        targetFilePath: request.targetFilePath,
+        targetSymbolName: request.targetSymbolName,
+        filesCount: request.relevantFiles.length,
+        files: request.relevantFiles.map((f) => ({
+          filePath: f.filePath,
+          language: f.language,
+          contentLength: f.content.length,
+        })),
+      });
+    }
+
+    try {
+      const prompt = this.buildCohesiveExplanationPrompt(request);
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Сгенерированный промпт для связного объяснения:', {
+          prompt,
+        });
+      }
+
+      const response = await this.callOpenAI(prompt);
+      const duration = Date.now() - startTime;
+
+      this.logger.log(`Связное объяснение сгенерировано за ${duration}ms`);
+
+      if (logLevel === 'detailed') {
+        this.logger.debug('Ответ от OpenAI для связного объяснения:', {
+          response,
+        });
+      }
+
+      return { explanation: response };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(
+        `Ошибка при генерации связного объяснения (${duration}ms):`,
+        error,
+      );
+      throw new Error(
+        `Не удалось сгенерировать связное объяснение: ${error instanceof Error ? error.message : 'Неизвестная ошибка'}`,
+      );
+    }
+  }
+
+  private buildCohesiveExplanationPrompt(
+    request: CohesiveExplanationRequest,
+  ): string {
+    let prompt = `Ты эксперт по анализу кода. Проанализируй предоставленные файлы и создай связное объяснение на русском языке.
+
+Вопрос пользователя: "${request.userQuestion}"
+
+ВАЖНО: Ты должен вернуть ТОЛЬКО markdown текст. НЕ используй JSON, НЕ используй поля "markdown", НЕ используй структуры данных. Начинай сразу с заголовка # и пиши обычный markdown текст.
+
+`;
+
+    if (request.targetFilePath && request.targetSymbolName) {
+      prompt += `Целевой файл: ${request.targetFilePath}
+Целевой символ: ${request.targetSymbolName}
+
+`;
+    }
+
+    prompt += `Файлы для анализа:
+
+`;
+
+    // Адаптивное ограничение контента в зависимости от количества файлов
+    const fileCount = request.relevantFiles.length;
+    const baseLimit = 5000; // Базовый лимит 5000 символов
+    const adaptiveLimit = Math.max(2000, Math.floor(20000 / fileCount)); // Адаптивное ограничение
+    const maxContentLength = Math.min(baseLimit, adaptiveLimit);
+
+    this.logger.log(
+      `Адаптивное ограничение контента: ${maxContentLength} символов на файл (файлов: ${fileCount})`,
+    );
+
+    request.relevantFiles.forEach((file, index) => {
+      const truncatedContent =
+        file.content.length > maxContentLength
+          ? file.content.substring(0, maxContentLength) + '\n... (файл обрезан)'
+          : file.content;
+
+      prompt += `${index + 1}. Файл: ${file.filePath}
+Язык: ${file.language}
+
+\`\`\`${file.language}
+${truncatedContent}
+\`\`\`
+
+`;
+    });
+
+    prompt += `Создай объяснение в ТОЧНО таком markdown формате:
+
+# [Заголовок объяснения системы]
+
+[Краткое введение с использованием **жирного текста** для ключевых терминов и концепций]
+
+## Основные файлы
+
+1. **filename.ts** - описание назначения файла
+2. **filename2.ts** - описание назначения файла
+3. **filename3.ts** - описание назначения файла
+
+## Как работает [название системы]
+
+### Шаг 1: [Название первого шага]
+
+[Объяснение с примерами кода]
+
+\`\`\`typescript
+// Пример кода с комментариями
+function exampleFunction() {
+  return result;
+}
+\`\`\`
+
+### Шаг 2: [Название второго шага]
+
+[Продолжение объяснения с кодом]
+
+\`\`\`javascript
+// Еще один пример кода
+const example = {
+  property: value
+};
+\`\`\`
+
+### Шаг 3: [Название третьего шага]
+
+[Завершающее объяснение]
+
+\`\`\`python
+# Пример на Python
+def example_function():
+    return result
+\`\`\`
+
+## Безопасность
+
+- Пароли хешируются с помощью **bcrypt**
+- Токены имеют ограниченное время жизни
+- Секретные ключи хранятся в переменных окружения
+
+## Зависимости
+
+Система использует следующие npm пакеты:
+- \`package-name\` для описания назначения
+- \`another-package\` для описания назначения
+- \`third-package\` для описания назначения
+
+**ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ К ФОРМАТИРОВАНИЮ:**
+
+1. **Заголовки:** Используй # для главного заголовка, ## для разделов, ### для подразделов
+2. **Код:** Всегда указывай язык в блоках \`\`\`language
+3. **Жирный текст:** Используй **текст** для выделения ключевых терминов
+4. **Списки:** Нумерованные списки (1., 2., 3.) для шагов, маркированные (-) для перечислений
+5. **Структура:** Строго следуй указанной структуре с разделами "Основные файлы", "Как работает", "Безопасность", "Зависимости"
+6. **Примеры кода:** Включай релевантные фрагменты кода с правильными языковыми тегами
+7. **Объяснения:** Пиши простым языком, объясняй что делает каждый компонент
+
+**КРИТИЧЕСКИ ВАЖНО:** 
+- НЕ возвращай JSON
+- НЕ используй поля типа "markdown" 
+- НЕ создавай структуры данных
+- Возвращай ТОЛЬКО чистый markdown текст
+- Начинай сразу с символа # (заголовок)
+- Заканчивай последним разделом
+- Пиши как обычный markdown документ
+
+Пример правильного ответа:
+# Название системы
+**Введение** - описание системы
+
+## Основные файлы
+1. **file.ts** - описание
+
+## Как работает система
+### Шаг 1: Название
+Объяснение с кодом:
+\`\`\`typescript
+// код
+\`\`\`
+
+## Безопасность
+- пункт 1
+- пункт 2
+
+## Зависимости
+- \`package\` - описание`;
+
+    return prompt;
   }
 
   isAvailable(): boolean {

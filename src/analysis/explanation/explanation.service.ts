@@ -215,40 +215,109 @@ export class ExplanationService {
     filePath: string,
     symbolName: string,
     options: ExplanationOptions = {},
-  ): Promise<CodeExplanation> {
-    const project = await this.projectsService.findByIdForUser(
-      userId,
-      projectId,
+  ): Promise<{ explanation: string }> {
+    const logLevel = getLogLevel();
+    const startTime = Date.now();
+
+    this.logger.log(
+      `Генерируем связное объяснение для символа ${symbolName} в файле ${filePath}`,
     );
-    const fullPath = `${project.extractedPath}/${filePath}`;
 
-    const parsedFile = await this.astParserService.parseFile(fullPath);
-    const symbol = parsedFile.symbols.find((s) => s.name === symbolName);
-
-    if (!symbol) {
-      throw new Error(`Символ ${symbolName} не найден в файле ${filePath}`);
+    if (logLevel === 'detailed') {
+      this.logger.debug('Параметры объяснения символа:', {
+        userId,
+        projectId,
+        filePath,
+        symbolName,
+        options,
+      });
     }
 
-    const explanation = await this.openaiService.explainCode({
-      symbol,
-      includeComplexity: options.includeComplexity,
-    });
+    try {
+      this.logger.log(`1. Получаем проект для пользователя ${userId}, проекта ${projectId}`);
+      const project = await this.projectsService.findByIdForUser(
+        userId,
+        projectId,
+      );
+      this.logger.log(`2. Проект получен: ${project.extractedPath}`);
 
-    const savedExplanation = await this.databaseService.codeExplanation.create({
-      data: {
-        reportId: '', // Временный ID, в реальности нужно создать отчет
+      // Создаем вопрос пользователя на основе символа
+      const userQuestion = `Объясни что делает символ "${symbolName}" в файле ${filePath} и как он работает`;
+      this.logger.log(`3. Вопрос пользователя: ${userQuestion}`);
+
+      // Получаем содержимое целевого файла
+      const fullPath = `${project.extractedPath}/${filePath}`;
+      this.logger.log(`4. Читаем файл: ${fullPath}`);
+      const fileContent = await this.readFileContent(fullPath);
+      const language = this.detectLanguageFromPath(filePath);
+      this.logger.log(`5. Файл прочитан, размер: ${fileContent.length} символов, язык: ${language}`);
+
+      // Ищем релевантные файлы с помощью семантического поиска
+      this.logger.log(`6. Ищем релевантные файлы...`);
+      const relevantFiles = await this.semanticSearchService.searchRelevantFiles(
+        userId,
+        projectId,
+        userQuestion,
+        5, // top-5 файлов
+      );
+      this.logger.log(`7. Найдено релевантных файлов: ${relevantFiles.length}`);
+
+      // Собираем содержимое релевантных файлов
+      const relevantFilesContent: Array<{ filePath: string; content: string; language: string }> = [];
+      
+      // Добавляем целевой файл первым
+      relevantFilesContent.push({
         filePath,
-        symbolName: symbol.name,
-        symbolType: symbol.type,
-        lineStart: symbol.lineStart,
-        lineEnd: symbol.lineEnd,
-        summary: explanation.summary,
-        detailed: explanation.detailed,
-        complexity: explanation.complexity,
-      },
-    });
+        content: fileContent,
+        language,
+      });
+      this.logger.log(`8. Добавлен целевой файл: ${filePath}`);
 
-    return savedExplanation;
+      // Добавляем релевантные файлы
+      for (const relevantFile of relevantFiles) {
+        try {
+          const relevantFullPath = `${project.extractedPath}/${relevantFile.filePath}`;
+          this.logger.log(`9. Читаем релевантный файл: ${relevantFullPath}`);
+          const content = await this.readFileContent(relevantFullPath);
+          const relevantLanguage = this.detectLanguageFromPath(relevantFile.filePath);
+          
+          relevantFilesContent.push({
+            filePath: relevantFile.filePath,
+            content,
+            language: relevantLanguage,
+          });
+          this.logger.log(`10. Релевантный файл добавлен: ${relevantFile.filePath}`);
+        } catch (error) {
+          this.logger.warn(`Не удалось прочитать файл ${relevantFile.filePath}:`, error);
+        }
+      }
+
+      this.logger.log(`11. Найдено ${relevantFilesContent.length} файлов для анализа`);
+
+      // Генерируем связное объяснение
+      this.logger.log(`12. Генерируем связное объяснение через OpenAI...`);
+      const explanation = await this.openaiService.generateCohesiveExplanation({
+        userQuestion,
+        relevantFiles: relevantFilesContent,
+        targetFilePath: filePath,
+        targetSymbolName: symbolName,
+      });
+      this.logger.log(`13. Объяснение получено от OpenAI`);
+
+      const duration = Date.now() - startTime;
+      this.logger.log(
+        `Связное объяснение для символа ${symbolName} сгенерировано за ${duration}ms`,
+      );
+
+      return { explanation: explanation.explanation };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      this.logger.error(
+        `Ошибка при генерации связного объяснения для символа ${symbolName} (${duration}ms):`,
+        error,
+      );
+      throw error;
+    }
   }
 
   async getExplanations(
@@ -372,7 +441,7 @@ export class ExplanationService {
           for (const filePath of allFilePaths) {
             try {
               const fullPath = `${projectPath}/${filePath}`;
-              const parsedFile = await this.astParserService.parseFile(fullPath);
+              const parsedFile = await this.astParserService.parseFile(fullPath, filePath);
               parsedFiles.push(parsedFile);
             } catch (error) {
               this.logger.warn(`Не удалось распарсить файл ${filePath}:`, error);
@@ -445,6 +514,51 @@ export class ExplanationService {
         targetedAnalysis: !!options.query,
         query: options.query || undefined,
       };
+
+      // Для targetedAnalysis генерируем связное объяснение
+      if (options.query) {
+        this.logger.log(`Генерируем связное объяснение для targetedAnalysis с запросом: "${options.query}"`);
+        
+        try {
+          // Собираем содержимое всех проанализированных файлов
+          const relevantFilesContent: Array<{ filePath: string; content: string; language: string }> = [];
+          
+          for (const parsedFile of parsedFiles) {
+            try {
+              // parsedFile.filePath уже содержит относительный путь
+              const fullPath = `${projectPath}/${parsedFile.filePath}`;
+              const content = await this.readFileContent(fullPath);
+              const language = this.detectLanguageFromPath(parsedFile.filePath);
+              
+              relevantFilesContent.push({
+                filePath: parsedFile.filePath,
+                content,
+                language,
+              });
+            } catch (error) {
+              this.logger.warn(`Не удалось прочитать файл ${parsedFile.filePath} для связного объяснения:`, error);
+            }
+          }
+
+          this.logger.log(`Собрано ${relevantFilesContent.length} файлов для связного объяснения`);
+
+          // Генерируем связное объяснение
+          const cohesiveExplanation = await this.openaiService.generateCohesiveExplanation({
+            userQuestion: options.query,
+            relevantFiles: relevantFilesContent,
+            targetFilePath: '', // Для targetedAnalysis нет конкретного файла
+            targetSymbolName: '', // Для targetedAnalysis нет конкретного символа
+          });
+
+          // Добавляем explanation в result
+          (result as any).explanation = cohesiveExplanation.explanation;
+          
+          this.logger.log(`Связное объяснение сгенерировано и добавлено в result (${cohesiveExplanation.explanation.length} символов)`);
+        } catch (error) {
+          this.logger.error(`Ошибка при генерации связного объяснения для targetedAnalysis:`, error);
+          // Не прерываем выполнение, просто не добавляем explanation
+        }
+      }
 
       this.logger.log(`Объяснение ${reportId} завершено: обработано ${result.filesAnalyzed} файлов, объяснено ${result.explainedSymbols} из ${result.totalSymbols} символов`);
 
@@ -747,6 +861,16 @@ export class ExplanationService {
         return 'go';
       default:
         return 'unknown';
+    }
+  }
+
+  private async readFileContent(filePath: string): Promise<string> {
+    try {
+      const fs = await import('fs/promises');
+      return await fs.readFile(filePath, 'utf-8');
+    } catch (error) {
+      this.logger.error(`Ошибка при чтении файла ${filePath}:`, error);
+      throw new Error(`Не удалось прочитать файл ${filePath}`);
     }
   }
 }

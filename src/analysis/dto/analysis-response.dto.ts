@@ -129,68 +129,10 @@ export class VulnerabilityDto {
 
 export class CodeExplanationDto {
   @ApiProperty({
-    description: 'ID объяснения',
-    example: 'uuid-string',
+    description: 'Связное объяснение кода с примерами в markdown формате',
+    example: '# Объяснение работы кода\n\nЭтот код реализует систему аутентификации...\n\n```typescript\n// Пример кода\nfunction authenticate(user) {\n  return jwt.sign(user, secret);\n}\n```',
   })
-  id: string;
-
-  @ApiProperty({
-    description: 'Путь к файлу',
-    example: 'src/app.controller.ts',
-  })
-  filePath: string;
-
-  @ApiProperty({
-    description: 'Имя символа (функция/класс)',
-    required: false,
-    example: 'getHello',
-  })
-  symbolName?: string;
-
-  @ApiProperty({
-    description: 'Тип символа',
-    required: false,
-    example: 'function',
-  })
-  symbolType?: string;
-
-  @ApiProperty({
-    description: 'Начальная строка',
-    example: 10,
-  })
-  lineStart: number;
-
-  @ApiProperty({
-    description: 'Конечная строка',
-    example: 12,
-  })
-  lineEnd: number;
-
-  @ApiProperty({
-    description: 'Краткое описание',
-    example: 'Returns a greeting message',
-  })
-  summary: string;
-
-  @ApiProperty({
-    description: 'Подробное объяснение от AI',
-    example:
-      'This function returns a simple greeting message using the AppService...',
-  })
-  detailed: string;
-
-  @ApiProperty({
-    description: 'Цикломатическая сложность',
-    required: false,
-    example: 1,
-  })
-  complexity?: number;
-
-  @ApiProperty({
-    description: 'Дата создания',
-    example: '2025-01-18T06:54:25.000Z',
-  })
-  createdAt: Date;
+  explanation: string;
 }
 
 export class AnalysisResultDto {

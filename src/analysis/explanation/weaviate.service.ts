@@ -274,6 +274,7 @@ export class WeaviateService implements OnModuleInit {
     query: string,
     limit: number = 10,
     openaiService?: EmbeddingProvider,
+    minSimilarity: number = 0.75,
   ): Promise<SearchResult[]> {
     const logLevel = getLogLevel();
     const startTime = Date.now();
@@ -301,37 +302,78 @@ export class WeaviateService implements OnModuleInit {
 
         searchResult = await collection.query.nearVector(queryEmbedding, {
           limit: limit,
+          returnMetadata: ['distance', 'certainty'],
         });
       } else {
         // Используем встроенный векторизатор Weaviate
         searchResult = await collection.query.nearText(query, {
           limit: limit,
+          returnMetadata: ['distance', 'certainty'],
         });
       }
 
       const documents: WeaviateFetchedObject[] = searchResult.objects || [];
 
-      const results: SearchResult[] = documents.map((doc) => ({
+      // Debug logging для проверки metadata
+      if (logLevel === 'detailed' && documents.length > 0) {
+        this.logger.debug(
+          'Raw metadata from first result:',
+          documents[0]?.metadata,
+        );
+      }
+
+      const allResults: SearchResult[] = documents.map((doc) => ({
         filePath: (doc.properties?.filePath as string) || doc.filePath || '',
         summary: (doc.properties?.summary as string) || doc.summary || '',
         language:
           (doc.properties?.language as string) || doc.language || 'unknown',
-        similarity: (doc.metadata?.certainty as number) || 0,
+        similarity:
+          (doc.metadata?.certainty as number) ||
+          (doc.metadata?.distance ? 1 - (doc.metadata.distance as number) : 0),
         fileSize:
           (doc.properties?.fileSize as number) || (doc.fileSize as number) || 0,
       }));
 
+      // Логируем результаты поиска с вероятностями
+      this.logger.log(`Результаты поиска по запросу "${query}":`);
+      allResults.forEach((result, index) => {
+        this.logger.log(
+          `  ${index + 1}. [${(result.similarity * 100).toFixed(2)}%] ${result.filePath}`,
+        );
+      });
+
+      // Фильтруем по similarity >= minSimilarity
+      const filteredResults = allResults.filter(
+        (result) => result.similarity >= minSimilarity,
+      );
+      let finalResults: SearchResult[];
+      if (filteredResults.length > 0) {
+        finalResults = filteredResults;
+        this.logger.log(
+          `Фильтрация по similarity >= ${minSimilarity}: ${filteredResults.length} из ${allResults.length} файлов прошли порог`,
+        );
+      } else {
+        // Fallback: возвращаем топ-5 из исходных результатов
+        finalResults = allResults.slice(0, 5);
+        this.logger.warn(
+          `Ни один файл не прошел порог similarity >= ${minSimilarity}, возвращаем топ-5 результатов`,
+        );
+      }
+
       const duration = Date.now() - startTime;
       this.logger.log(
-        `Поиск завершен за ${duration}ms: найдено ${results.length} релевантных файлов`,
+        `Поиск завершен за ${duration}ms: найдено ${finalResults.length} релевантных файлов`,
       );
 
       if (logLevel === 'detailed') {
         this.logger.debug('Результаты поиска:', {
           query,
           projectId,
-          resultsCount: results.length,
-          topResults: results.slice(0, 3).map((r) => ({
+          totalFound: allResults.length,
+          filteredCount: filteredResults.length,
+          finalCount: finalResults.length,
+          similarityThreshold: minSimilarity,
+          topResults: finalResults.slice(0, 3).map((r) => ({
             filePath: r.filePath,
             similarity: r.similarity,
             summary: r.summary.substring(0, 100) + '...',
@@ -340,7 +382,7 @@ export class WeaviateService implements OnModuleInit {
         });
       }
 
-      return results;
+      return finalResults;
     } catch (error) {
       const duration = Date.now() - startTime;
       this.logger.error(`Ошибка при поиске в Weaviate (${duration}ms):`, error);

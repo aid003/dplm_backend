@@ -82,6 +82,7 @@ export class SemanticSearchService {
     projectId: string,
     query: string,
     limit: number = 10,
+    minSimilarity: number = 0.75,
   ): Promise<FileSearchResult[]> {
     const logLevel = getLogLevel();
     const startTime = Date.now();
@@ -94,6 +95,7 @@ export class SemanticSearchService {
         projectId,
         query,
         limit,
+        minSimilarity,
       });
     }
 
@@ -106,7 +108,14 @@ export class SemanticSearchService {
       query,
       limit,
       this.openaiService,
+      minSimilarity,
     );
+
+    // Логируем результаты поиска с вероятностями
+    this.logger.log(`Результаты поиска по запросу "${query}":`);
+    results.forEach((result, index) => {
+      this.logger.log(`  ${index + 1}. [${(result.similarity * 100).toFixed(2)}%] ${result.filePath}`);
+    });
 
     const duration = Date.now() - startTime;
     this.logger.log(`Поиск завершен за ${duration}ms: найдено ${results.length} релевантных файлов`);
